@@ -1,0 +1,114 @@
+topic: 学科研究范式与论文拆解方案预设库
+created: 2026-08-21
+description: 为"文献阅读台"学科交叉拆解功能预设各学科常见研究范式、论文结构及差异化拆解字段方案
+
+items:
+  - id: paradigm-experimental-baseline
+    name: 实验对比型范式（CS/AI/ML）
+    desc: 需要基线（baseline）与 SOTA 对比，消融实验、数据集与指标评估
+    representative_disciplines: [计算机科学, 人工智能, 数据科学, 信息检索, 自然语言处理, 计算机视觉]
+    structure: IMRaD 变体（Introduction-Method-Experiments-Discussion）
+    reporting_standard: NeurIPS/ACL 模板惯例
+
+  - id: paradigm-rct
+    name: 对照实验型范式（医学/心理/教育）
+    desc: RCT/准实验设计，随机分组、干预对照、伦理审批、效果评估
+    representative_disciplines: [医学, 公共卫生, 临床心理学, 药学, 教育学, 农学]
+    structure: CONSORT 结构化报告（Title/Abstract-Methods-Results-Discussion + Open Science）
+    reporting_standard: CONSORT 2025（30 项清单 + 流程图）
+
+  - id: paradigm-empirical-stat
+    name: 实证统计型范式（经济/管理/社会/传播）
+    desc: 假设检验、回归建模、数据来源与识别策略、稳健性检验
+    representative_disciplines: [经济学, 管理学, 社会学, 政治学, 传播学, 金融学, 公共政策]
+    structure: Introduction-Motivation → Literature → Theory/Model → Data → Econometric Model → Results → Robustness → Conclusion
+    reporting_standard: MIT Empirical Paper Guidelines / NBER 惯例
+
+  - id: paradigm-theoretical
+    name: 理论论述型范式（哲学/人文/艺术）
+    desc: 纯论述思辨，概念界定、论点论据结构、思想脉络、反驳回应
+    representative_disciplines: [哲学, 文学理论, 艺术学理论, 法学理论, 历史学, 语言学]
+    structure: 主题式结构（Thesis-Argument-Objection-Response），非 IMRaD
+    reporting_standard: 学科期刊惯例（无统一规范）
+
+  - id: paradigm-case-study
+    name: 案例研究型范式（人类学/社会学/管理/法学）
+    desc: 个案深入、多源证据、三角验证、模式匹配、跨案例分析
+    representative_disciplines: [人类学, 社会学, 管理案例, 法学案例, 民族志, 政治学案例]
+    structure: Intro → Literature → Methods → Case Description → Cross-Case Analysis → Discussion
+    reporting_standard: Yin (2018) 案例研究规范（四原则+五分析技术）
+
+  - id: paradigm-systematic-review
+    name: 综述与元分析型范式
+    desc: 系统检索、纳入排除标准、质量评估、效应量合并、异质性与偏倚评估
+    representative_disciplines: [循证医学, 社会科学综述, 教育学综述, 环境学综述]
+    structure: PRISMA 2020 结构化报告（27 项清单 + 流程图）
+    reporting_standard: PRISMA 2020 / PROSPERO 注册
+
+  - id: paradigm-computational-sim
+    name: 计算模拟型范式（物理/化学/工程/材料/气候）
+    desc: 数学模型假设、数值方法、Verification（代码正确性）与 Validation（现实对比）、不确定性量化
+    representative_disciplines: [物理学, 化学, 机械工程, 材料科学, 气候科学, 土木工程, 航空航天]
+    structure: Intro → Model (Assumptions+Math Formulation) → Numerical Methods → V&V → Results → Discussion
+    reporting_standard: ASME V&V 10/20/40 / IEEE 1597.1
+
+  - id: paradigm-design-science
+    name: 设计与构建型范式（HCI/软件工程/设计学）
+    desc: 需求-设计-实现-评估闭环，构件与设计理论贡献
+    representative_disciplines: [人机交互, 软件工程, 设计学, 信息系统, 交互设计]
+    structure: DSRM 六步（问题识别-目标定义-设计开发-演示-评估-沟通）
+    reporting_standard: DSRM (Peffers et al.) / HCI 期刊惯例
+
+  - id: cross-reference
+    name: 学科大类交叉参照（识别"学科交叉"的映射基座）
+    desc: 六大学科大类到范式类型的映射，用于 AI 判定单学科/多学科交叉并路由拆解方案
+    representative_disciplines: [数理科学, 生命与医学, 工程与信息, 经济与管理, 社会科学, 人文与艺术]
+    structure: 学科大类 → 主导范式 + 次生范式 映射表
+    reporting_standard: 教育部学科分类 / 中图分类法 参照
+
+fields:
+  - id: paradigm_identity
+    name: 范式识别信息
+    description: 范式 ID、名称、代表学科映射、识别标志（结构信号/关键词/章节特征）
+    detail_level: 详细
+
+  - id: paper_structure
+    name: 论文结构要求
+    description: 典型章节结构、结构变体、报告规范遵循情况
+    detail_level: 详细
+
+  - id: common_fields
+    name: 通用拆解字段
+    description: 所有范式共享的字段：标题/作者/来源/年份/DOI/摘要/研究问题/主要发现/结论
+    detail_level: 简要
+
+  - id: method_fields
+    name: 方法类拆解字段
+    description: 各范式特有方法学字段（实验设置/基线/识别策略/论证结构/检索策略等）
+    detail_level: 详细
+
+  - id: result_fields
+    name: 结果类拆解字段
+    description: 各范式特有结果呈现字段（指标表/效应量/回归表/数值对比等）
+    detail_level: 详细
+
+  - id: evaluation_fields
+    name: 评估类拆解字段
+    description: 局限性/有效性/贡献评估字段，各范式侧重点不同
+    detail_level: 详细
+
+  - id: contribution_type
+    name: 知识贡献类型
+    description: 新理论/新方法/新数据/新证据/新设计 的归类字段
+    detail_level: 简要
+
+  - id: rendering_rules
+    name: markdown 渲染规则
+    description: 数据表格渲染要求、公式图表处理、模板结构差异
+    detail_level: 简要
+
+execution:
+  batch_size: 4
+  items_per_agent: 2
+  output_dir: ./results
+  time_range: 不限（学术范式为成熟知识体系）

@@ -1,0 +1,420 @@
+topic: 学科研究范式与论文拆解方案预设库
+created: 2026-08-21
+
+field_categories:
+
+  - category: paradigm_identity
+    name: 范式识别信息
+    fields:
+      - name: paradigm_id
+        type: string
+        required: true
+      - name: paradigm_name
+        type: string
+        required: true
+      - name: representative_disciplines
+        type: list[string]
+        required: true
+      - name: identification_signals
+        type: list[string]
+        description: 用于 AI 识别该范式论文的结构信号/关键词列表
+      - name: structure_type
+        type: string
+        enum: [IMRaD, IMRaD-变体, 主题式, 六步法, PRISMA, 案例框架, 混合]
+      - name: reporting_standard
+        type: string
+        description: 遵循的报告规范（如 CONSORT/PRISMA/DSRM 等）
+
+  - category: common_fields
+    name: 通用拆解字段（所有范式共享）
+    fields:
+      - name: title
+        type: string
+        required: true
+      - name: authors
+        type: list[string]
+        required: true
+      - name: year
+        type: integer
+        required: true
+      - name: source
+        type: string
+        description: 期刊/会议/出版社
+      - name: doi
+        type: string
+      - name: abstract
+        type: text
+      - name: keywords
+        type: list[string]
+      - name: research_question
+        type: text
+        description: 研究问题/目标/假设
+      - name: main_finding
+        type: text
+        description: 主要发现/结论
+      - name: knowledge_contribution
+        type: string
+        enum: [新理论, 新方法, 新数据, 新证据, 新设计, 新综述, 新应用]
+
+  - category: paradigm_specific_fields
+    name: 范式特有拆解字段
+    description: 每种范式独有的拆解字段集，按范式 ID 分组
+    paradigms:
+
+      - id: paradigm-experimental-baseline
+        fields:
+          - name: dataset_name
+            type: string
+            description: 使用的数据集名称
+          - name: dataset_statistics
+            type: table
+            description: 数据集统计信息（大小/类别分布等）
+          - name: baseline_methods
+            type: list[string]
+            description: 对比的基线/SOTA 方法列表
+          - name: evaluation_metrics
+            type: list[string]
+            description: 评价指标（accuracy, F1, BLEU, PSNR 等）
+          - name: main_results_table
+            type: table
+            description: 核心结果对比表
+          - name: ablation_study
+            type: table
+            description: 消融实验结果
+          - name: experimental_setup
+            type: text
+            description: 实验环境配置（硬件/超参数/框架版本）
+          - name: reproducibility
+            type: string
+            description: 代码/数据可复现性声明
+          - name: sota_comparison
+            type: text
+            description: 与 SOTA 方法的定性定量对比分析
+
+      - id: paradigm-rct
+        fields:
+          - name: trial_design
+            type: string
+            enum: [平行组, 交叉设计, 析因设计, 非劣效, 等效性, 集群随机]
+          - name: randomization_method
+            type: string
+            description: 随机化方法（简单随机/区组随机/分层随机）
+          - name: allocation_concealment
+            type: string
+            description: 分配隐藏机制
+          - name: blinding
+            type: string
+            enum: [开放, 单盲, 双盲, 三盲, 评估者盲]
+          - name: sample_size
+            type: integer
+            description: 随机化样本量
+          - name: sample_size_estimation
+            type: text
+            description: 样本量估算依据
+          - name: intervention
+            type: text
+            description: 干预措施详细描述
+          - name: control_condition
+            type: text
+            description: 对照条件
+          - name: primary_outcome
+            type: text
+            description: 主要结局指标
+          - name: secondary_outcomes
+            type: list[string]
+            description: 次要结局指标
+          - name: consort_flow
+            type: image
+            description: CONSORT 流程图
+          - name: ethics_approval
+            type: string
+            description: 伦理审批机构与编号
+          - name: trial_registration
+            type: string
+            description: 试验注册号/平台
+          - name: harms
+            type: text
+            description: 不良事件报告
+
+      - id: paradigm-empirical-stat
+        fields:
+          - name: theoretical_framework
+            type: text
+            description: 理论框架/假设推导
+          - name: data_source
+            type: string
+            description: 数据来源（数据库/调查/实验/面板）
+          - name: sample_description
+            type: text
+            description: 样本描述（时间范围/样本量/筛选条件）
+          - name: descriptive_statistics
+            type: table
+            description: 描述性统计表
+          - name: identification_strategy
+            type: string
+            description: 识别策略（OLS/DID/IV/RDD/Heckman/PSM）
+          - name: main_regression
+            type: table
+            description: 核心回归结果表
+          - name: robustness_checks
+            type: list[string]
+            description: 稳健性检验列表
+          - name: endogeneity
+            type: text
+            description: 内生性处理说明
+          - name: heterogeneity_analysis
+            type: table
+            description: 异质性分析结果
+          - name: mechanism_analysis
+            type: text
+            description: 机制/中介效应分析
+
+      - id: paradigm-theoretical
+        fields:
+          - name: thesis_statement
+            type: text
+            description: 核心论点/命题
+          - name: concept_definitions
+            type: list[string]
+            description: 关键概念界定
+          - name: argument_structure
+            type: text
+            description: 论证结构/推理路径
+          - name: intellectual_lineage
+            type: text
+            description: 思想脉络/学术谱系定位
+          - name: key_sources
+            type: list[string]
+            description: 主要对话/批判的已有理论
+          - name: objections
+            type: list[string]
+            description: 反驳与回应
+          - name: implications
+            type: text
+            description: 理论含义/推论
+          - name: contribution
+            type: text
+            description: 理论贡献（澄清/反驳/拓展/综合）
+
+      - id: paradigm-case-study
+        fields:
+          - name: case_selection
+            type: text
+            description: 案例选择依据（典型性/极端性/方便性）
+          - name: unit_of_analysis
+            type: string
+            description: 分析单元
+          - name: data_collection
+            type: list[string]
+            description: 数据收集方法（访谈/观察/文档/档案）
+          - name: number_of_sources
+            type: integer
+            description: 证据来源数量
+          - name: triangulation
+            type: text
+            description: 三角验证方法
+          - name: analysis_method
+            type: string
+            description: 分析方法（模式匹配/解释构建/时序分析/逻辑模型/跨案例综合）
+          - name: case_description
+            type: text
+            description: 案例描述
+          - name: propositions
+            type: list[string]
+            description: 理论命题
+          - name: cross_case_patterns
+            type: table
+            description: 跨案例模式对比表
+
+      - id: paradigm-systematic-review
+        fields:
+          - name: review_question
+            type: text
+            description: 综述问题（PICO/PICo 框架）
+          - name: search_strategy
+            type: text
+            description: 检索策略（数据库/关键词/时间范围）
+          - name: inclusion_criteria
+            type: list[string]
+            description: 纳入标准
+          - name: exclusion_criteria
+            type: list[string]
+            description: 排除标准
+          - name: prisma_flow
+            type: image
+            description: PRISMA 筛选流程图
+          - name: total_records
+            type: integer
+            description: 初始检索记录数
+          - name: included_studies
+            type: integer
+            description: 最终纳入研究数
+          - name: quality_assessment
+            type: string
+            description: 质量评估工具（Cochrane ROB/AMSTAR/NOS 等）
+          - name: data_extraction
+            type: table
+            description: 数据提取表
+          - name: synthesis_method
+            type: string
+            enum: [叙述性综合, 元分析, 主题综合, 元人种志, 现实综合]
+          - name: heterogeneity
+            type: text
+            description: 异质性评估（I² 统计量/亚组分析）
+          - name: publication_bias
+            type: text
+            description: 发表偏倚评估（漏斗图/Egger 检验）
+          - name: certainty_evidence
+            type: string
+            description: 证据确定性等级（GRADE 等）
+
+      - id: paradigm-computational-sim
+        fields:
+          - name: model_assumptions
+            type: text
+            description: 模型假设与简化条件
+          - name: mathematical_formulation
+            type: text
+            description: 数学公式化（控制方程/边界条件/初始条件）
+          - name: numerical_method
+            type: string
+            description: 数值方法（FEM/FVM/FDM/SPH 等）
+          - name: mesh_description
+            type: text
+            description: 网格/离散化描述
+          - name: verification
+            type: text
+            description: 验证（Verification：代码正确性、收敛性分析）
+          - name: validation
+            type: text
+            description: 确认（Validation：与实验/理论/解析解对比）
+          - name: validation_metrics
+            type: list[string]
+            description: 确认指标（误差指标/相关性系数）
+          - name: parameter_settings
+            type: table
+            description: 关键参数设置表
+          - name: simulation_results
+            type: image
+            description: 仿真结果可视化
+          - name: uncertainty_quantification
+            type: text
+            description: 不确定性量化方法
+
+      - id: paradigm-design-science
+        fields:
+          - name: problem_identification
+            type: text
+            description: 问题识别与动机
+          - name: objectives
+            type: list[string]
+            description: 解决方案目标定义
+          - name: design_principles
+            type: list[string]
+            description: 设计原则/设计理论
+          - name: artifact_description
+            type: text
+            description: 构件描述（系统/方法/模型/框架）
+          - name: demonstration
+            type: text
+            description: 演示场景/应用实例
+          - name: evaluation_method
+            type: string
+            description: 评估方法（实验/用户研究/案例/调查）
+          - name: evaluation_results
+            type: table
+            description: 评估结果
+          - name: design_theory_contribution
+            type: text
+            description: 设计理论贡献
+
+  - category: language_dimension
+    name: 语言识别与本地化字段
+    description: 论文语言识别结果，决定是否启动翻译流程及拆解字段的中英文差异
+    fields:
+      - name: paper_language
+        type: string
+        enum: [中文, 英文, 其他]
+        required: true
+        description: 全文主导语言（fastText LID 识别，置信度阈值 ≥0.3）
+      - name: language_confidence
+        type: float
+        description: 语言识别置信度（0-1）
+      - name: needs_translation
+        type: boolean
+        description: 是否启动翻译流程（paper_language != 中文 时默认 true，可在设置中覆盖）
+      - name: document_type
+        type: string
+        enum: [期刊论文, 学位论文, 会议论文, 预印本, 综述, 其他]
+        description: 文档体裁，决定结构信号解析规则（GB/T 7713.1 学位论文 vs GB/T 7713.2 期刊论文 vs IMRaD）
+      - name: abstract_style
+        type: string
+        enum: [报道性, 报道指示性, 指示性, 结构化]
+        description: 摘要类型（GB/T 7713.2-2022 分类；结构化摘要常见于英文医学/实证论文）
+      - name: reference_standard
+        type: string
+        enum: [GB/T 7714顺序编码制, GB/T 7714著者-出版年制, APA, MLA, Chicago, IEEE, Nature风格]
+        description: 参考文献著录标准（中英文论文差异显著，影响引用拆解）
+      - name: has_english_abstract
+        type: boolean
+        description: 是否含英文摘要（中文期刊论文依 GB/T 7713.2 宜有外文摘要，利于国际交流）
+      - name: has_english_keywords
+        type: boolean
+        description: 是否含英文关键词（中文期刊论文宜标注外文关键词）
+      - name: funding_info
+        type: string
+        description: 基金资助项目名称及编号（中文期刊前置部分必标；英文论文对应 Acknowledgments）
+      - name: communication_author
+        type: string
+        description: 通信作者标注（中文论文特有标注项）
+      - name: received_date
+        type: string
+        description: 收稿/修回日期（中文期刊前置部分宜标注）
+      - name: roadmap_in_intro
+        type: boolean
+        description: 引言是否含文章结构路线图（英文论文惯例，中文论文少见）
+      - name: literature_review_position
+        type: string
+        enum: [融入引言, 绪论内嵌, 独立章节]
+        description: 文献综述位置（中文期刊=引言内嵌"研究现状"；中文学位论文=绪论内嵌；英文学位论文=独立 Literature Review 章）
+
+  - category: interdisciplinary_mapping
+    name: 学科交叉识别映射
+    description: 学科大类→范式映射，支持 AI 判定论文的学科交叉类型并路由拆解方案
+    fields:
+      - name: discipline_category
+        type: string
+        enum: [数理科学, 生命与医学, 工程与信息, 经济与管理, 社会科学, 人文与艺术]
+      - name: primary_paradigm
+        type: string
+        description: 该学科主导范式 ID
+      - name: secondary_paradigms
+        type: list[string]
+        description: 该学科次生范式 ID（可能并行使用）
+      - name: typical_paradigm_weight
+        type: float
+        description: 该学科论文中主导范式占比（约数）
+      - name: detection_keywords
+        type: list[string]
+        description: 用于 AI 识别该学科论文的关键词信号
+
+  - category: interdisciplinary_routing
+    name: 交叉拆解路由规则
+    description: 当 AI 检测到论文涉及多学科交叉时，如何合并拆解字段
+    fields:
+      - name: cross_type
+        type: string
+        enum: [单学科, 双学科交叉, 多学科交叉]
+      - name: combine_strategy
+        type: string
+        enum: [主范式优先, 并集合并, 交集筛选, 序列化拆解]
+      - name: conflict_resolution
+        type: string
+        description: 字段冲突时的优先级规则
+
+uncertain:
+  - 各范式的实际论文中范式识别准确率（需后续测试）
+  - 学科交叉检测的阈值设定（如：多少比例关键词属于另一学科才算交叉）
+  - 渲染模板的具体视觉样式差异
+  - 语言识别置信度阈值（0.3 为 fastText LID 常用默认，需按中英学术语料校准）
+  - 中文学位论文/期刊论文的拆解差异（GB/T 7713.1 vs GB/T 7713.2）是否分别建模或共用一套字段
