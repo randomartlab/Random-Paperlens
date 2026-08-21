@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Mutex;
+use tauri::Emitter;
 use tauri::Manager;
 
 /// 全局应用状态：数据库连接（互斥保护，供多命令共享）
@@ -139,19 +140,21 @@ fn import_document(
     })
 }
 
-/// 调用 MinerU 云端 API 解析文献：上传 → 轮询 → 下载解压 → 更新状态
+/// 启动文献解析任务（异步）：后台线程执行 MinerU 上传/轮询/下载，进度与结果通过事件推送
 #[tauri::command]
-fn parse_document(
+fn start_parse(
     doc_id: String,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let mineru = state
         .mineru
         .as_ref()
-        .ok_or("MinerU API Key 未配置（请检查项目 .env 或环境变量）")?;
+        .ok_or("MinerU API Key 未配置（请检查项目 .env 或环境变量）")?
+        .clone();
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
-    // 1. 取文献源文件路径
+    // 1. 取文献源文件路径（快速，短暂持锁）
     let source_path: String = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row(
@@ -162,27 +165,86 @@ fn parse_document(
         .map_err(|e| format!("文献不存在: {e}"))?
     };
 
-    // 2. 上传 + 轮询（最长 10 分钟）
-    let batch_id = mineru.submit_file(Path::new(&source_path))?;
-    let result = mineru.poll_batch(&batch_id, 600, None)?;
-
-    // 3. 下载解压到 documents/{doc_id}/parsed/
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let dest = data_dir.join("documents").join(&doc_id).join("parsed");
-    let md_path = mineru.download_extract(&result, &dest)?;
-
-    // 4. 更新状态
+    // 2. 记录解析任务（running）
+    let task_id = uuid::Uuid::new_v4().to_string();
     {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE documents SET status = 'parsed', updated_at = ?1 WHERE id = ?2",
-            rusqlite::params![now, doc_id],
+            "INSERT INTO tasks (id, doc_id, type, status, created_at) VALUES (?1, ?2, 'parse', 'running', ?3)",
+            rusqlite::params![task_id, doc_id, now],
         )
         .map_err(|e| e.to_string())?;
     }
 
-    Ok(md_path.to_string_lossy().to_string())
+    // 3. 后台线程执行解析，事件推送进度与结果
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let emit = |event: &str, payload: serde_json::Value| {
+            let _ = app2.emit(event, payload);
+        };
+        emit(
+            "parse-progress",
+            json!({ "doc_id": doc_id, "stage": "上传中", "progress": 0.05 }),
+        );
+
+        let result = (|| -> Result<String, String> {
+            let batch_id = mineru.submit_file(Path::new(&source_path))?;
+            emit(
+                "parse-progress",
+                json!({ "doc_id": doc_id, "stage": "解析中", "progress": 0.4 }),
+            );
+            let r = mineru.poll_batch(&batch_id, 600, Some(&|p: &str| {
+                emit(
+                    "parse-progress",
+                    json!({ "doc_id": doc_id, "stage": "解析中", "progress": 0.6, "detail": p }),
+                );
+            }))?;
+            let dest = data_dir.join("documents").join(&doc_id).join("parsed");
+            let md = mineru.download_extract(&r, &dest)?;
+            emit(
+                "parse-progress",
+                json!({ "doc_id": doc_id, "stage": "完成", "progress": 1.0 }),
+            );
+            Ok(md.to_string_lossy().to_string())
+        })();
+
+        // 4. 回写状态
+        let state = app2.state::<AppState>();
+        let conn = state.conn.lock();
+        match (result, conn) {
+            (Ok(md), Ok(conn)) => {
+                let now = chrono::Utc::now().to_rfc3339();
+                let _ = conn.execute(
+                    "UPDATE documents SET status = 'parsed', updated_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now, doc_id],
+                );
+                let _ = conn.execute(
+                    "UPDATE tasks SET status = 'done', stage = 'parsed' WHERE id = ?1",
+                    rusqlite::params![task_id],
+                );
+                drop(conn);
+                emit("parse-done", json!({ "doc_id": doc_id, "md_path": md }));
+            }
+            (Err(e), Ok(conn)) => {
+                let now = chrono::Utc::now().to_rfc3339();
+                let _ = conn.execute(
+                    "UPDATE tasks SET status = 'failed', error = ?1, updated_at = ?2 WHERE id = ?3",
+                    rusqlite::params![e, now, task_id],
+                );
+                drop(conn);
+                emit("parse-failed", json!({ "doc_id": doc_id, "error": e }));
+            }
+            (_, Err(e)) => {
+                emit(
+                    "parse-failed",
+                    json!({ "doc_id": doc_id, "error": format!("数据库访问失败: {e}") }),
+                );
+            }
+        };
+    });
+
+    Ok(())
 }
 
 /// 文献列表查询（M1 骨架，后续扩展筛选/分页）
@@ -242,7 +304,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_documents,
             import_document,
-            parse_document
+            start_parse
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

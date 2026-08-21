@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 
 interface Doc {
   id: string;
@@ -27,6 +28,7 @@ function App() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [parsing, setParsing] = useState<Record<string, { stage: string; progress: number }>>({});
 
   const refresh = async () => {
     setDocs(await invoke<Doc[]>("list_documents"));
@@ -42,6 +44,15 @@ function App() {
     }
   };
 
+  const handleParse = async (doc: Doc) => {
+    try {
+      setParsing((p) => ({ ...p, [doc.id]: { stage: "启动中", progress: 0 } }));
+      await invoke("start_parse", { docId: doc.id });
+    } catch (e) {
+      setNotice(String(e));
+    }
+  };
+
   const pickFile = async () => {
     const path = await open({
       multiple: false,
@@ -52,6 +63,27 @@ function App() {
 
   useEffect(() => {
     refresh();
+    // 解析任务事件：进度 / 完成 / 失败
+    const unlisteners: Array<() => void> = [];
+    const register = async <T,>(event: string, handler: (payload: T) => void) => {
+      unlisteners.push(await listen<T>(event, (e) => handler(e.payload)));
+    };
+    register<{ doc_id: string; stage: string; progress: number }>("parse-progress", (p) => {
+      setParsing((prev) => ({ ...prev, [p.doc_id]: { stage: p.stage, progress: p.progress } }));
+    });
+    register("parse-done", async () => {
+      setParsing({});
+      setNotice(null);
+      await refresh();
+    });
+    register<{ doc_id: string; error: string }>("parse-failed", (p) => {
+      setParsing((prev) => {
+        const { [p.doc_id]: _drop, ...rest } = prev;
+        return rest;
+      });
+      setNotice(`解析失败: ${p.error}`);
+    });
+
     // 拖拽导入：窗口级文件拖放事件
     let unlisten: (() => void) | undefined;
     getCurrentWebview()
@@ -66,7 +98,10 @@ function App() {
       .then((fn) => {
         unlisten = fn;
       });
-    return () => unlisten?.();
+    return () => {
+      unlisteners.forEach((fn) => fn());
+      unlisten?.();
+    };
   }, []);
 
   return (
@@ -195,13 +230,28 @@ function App() {
                   >
                     {STATUS_LABEL[d.status] ?? d.status}
                   </span>
-                  {d.status === "pending" && (
-                    <button
-                      onClick={() => handleParse(d)}
-                      className="rounded-lg bg-[#0b1326]/90 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#0b1326]"
-                    >
-                      解析
-                    </button>
+                  {parsing[d.id] ? (
+                    <div className="flex w-40 flex-col items-end gap-1">
+                      <span className="text-xs text-[#0b1326]/60">
+                        {parsing[d.id].stage}{" "}
+                        {Math.round(parsing[d.id].progress * 100)}%
+                      </span>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/5">
+                        <div
+                          className="h-full rounded-full bg-[#0b1326]/70 transition-all"
+                          style={{ width: `${parsing[d.id].progress * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    d.status === "pending" && (
+                      <button
+                        onClick={() => handleParse(d)}
+                        className="rounded-lg bg-[#0b1326]/90 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#0b1326]"
+                      >
+                        解析
+                      </button>
+                    )
                   )}
                 </div>
               ))}

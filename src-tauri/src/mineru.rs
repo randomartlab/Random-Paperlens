@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 ///
 /// 流程：申请上传链接 → PUT 上传文件 → 轮询批量任务 → 下载并解压结果 zip。
 /// 文档参考：https://mineru.net/doc/docs/index_en/
+#[derive(Clone)]
 pub struct MinerUClient {
     key: String,
     base: String,
