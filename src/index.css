@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* 文献阅读台全局样式（DESIGN.md token 将在此落地） */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font-family: "Geist", -apple-system, "PingFang SC", "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
