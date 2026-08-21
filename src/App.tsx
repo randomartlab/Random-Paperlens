@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
+import ReaderView from "./ReaderView";
 
 interface Doc {
   id: string;
@@ -29,6 +30,13 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [parsing, setParsing] = useState<Record<string, { stage: string; progress: number }>>({});
+  const [view, setView] = useState<{ type: "list" } | { type: "reader"; doc: Doc }>({
+    type: "list",
+  });
+
+  const openReader = (doc: Doc) => {
+    if (doc.status === "parsed") setView({ type: "reader", doc });
+  };
 
   const refresh = async () => {
     setDocs(await invoke<Doc[]>("list_documents"));
@@ -110,7 +118,15 @@ function App() {
         dragging ? "ring-2 ring-inset ring-[#0b1326]/40" : ""
       }`}
     >
-      {/* 顶栏 */}
+      {view.type === "reader" ? (
+        <ReaderView
+          docId={view.doc.id}
+          title={view.doc.title}
+          onBack={() => setView({ type: "list" })}
+        />
+      ) : (
+        <>
+          {/* 顶栏 */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-black/5 bg-white px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0b1326] text-sm font-semibold text-white">
@@ -202,7 +218,10 @@ function App() {
               {docs.map((d) => (
                 <div
                   key={d.id}
-                  className="flex items-center gap-4 rounded-xl border border-black/5 bg-white px-5 py-4 transition-shadow hover:shadow-sm"
+                  onClick={() => openReader(d)}
+                  className={`flex items-center gap-4 rounded-xl border border-black/5 bg-white px-5 py-4 transition-shadow hover:shadow-sm ${
+                    d.status === "parsed" ? "cursor-pointer" : ""
+                  }`}
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#0b1326]/5 text-lg">
                     📄
@@ -258,7 +277,9 @@ function App() {
             </div>
           </div>
         )}
-      </main>
+        </main>
+          </>
+        )}
     </div>
   );
 }

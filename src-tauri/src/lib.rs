@@ -247,6 +247,39 @@ fn start_parse(
     Ok(())
 }
 
+/// 读取已解析的 Markdown 内容（用于预览视图）
+#[tauri::command]
+fn read_parsed(
+    doc_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM documents WHERE id = ?1",
+                [&doc_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("文献不存在: {e}"))?;
+        if status != "parsed" {
+            return Err("文献尚未解析完成".into());
+        }
+    }
+
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let parsed_dir = data_dir.join("documents").join(&doc_id).join("parsed");
+    let md_path = std::fs::read_dir(&parsed_dir)
+        .map_err(|e| format!("解析目录不可读: {e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
+        .ok_or("未找到解析结果 Markdown")?;
+
+    std::fs::read_to_string(&md_path).map_err(|e| e.to_string())
+}
+
 /// 文献列表查询（M1 骨架，后续扩展筛选/分页）
 #[tauri::command]
 fn list_documents(
@@ -304,7 +337,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_documents,
             import_document,
-            start_parse
+            start_parse,
+            read_parsed
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

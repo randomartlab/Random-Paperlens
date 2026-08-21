@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* 文献阅读台全局样式（DESIGN.md token 将在此落地） */
 html,
