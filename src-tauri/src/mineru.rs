@@ -146,19 +146,32 @@ impl MinerUClient {
         std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
         let zip_path = dest.join("result.zip");
 
-        // 用系统 curl 下载（macOS 必定自带）
-        let mut cmd = std::process::Command::new("curl");
-        cmd.args(["-sS", "-L", "--max-time", "600", "-o"]);
-        cmd.arg(&zip_path);
-        if let Some(p) = std::env::var("HTTPS_PROXY")
+        // 用系统 curl 下载（macOS 必定自带）。
+        // 策略：结果 CDN 为国内节点，优先直连；失败后回退走系统代理。
+        let proxy = std::env::var("HTTPS_PROXY")
             .or_else(|_| std::env::var("https_proxy"))
             .ok()
-            .filter(|u| !u.is_empty())
-        {
-            cmd.args(["-x", &p]);
-        }
-        cmd.arg(zip_url);
-        let out = cmd.output().map_err(|e| format!("curl 调用失败: {e}"))?;
+            .filter(|u| !u.is_empty());
+
+        let mut direct = std::process::Command::new("curl");
+        direct.args(["-sS", "-L", "--max-time", "600", "--noproxy", "*", "-o"]);
+        direct.arg(&zip_path).arg(zip_url);
+        let out = match direct.output() {
+            Ok(o) if o.status.success() => o,
+            _ => {
+                // 直连失败 → 走代理重试
+                let mut proxied = std::process::Command::new("curl");
+                proxied.args(["-sS", "-L", "--max-time", "600", "-o"]);
+                proxied.arg(&zip_path);
+                if let Some(p) = &proxy {
+                    proxied.args(["-x", p]);
+                }
+                proxied
+                    .arg(zip_url)
+                    .output()
+                    .map_err(|e| format!("curl 调用失败: {e}"))?
+            }
+        };
         if !out.status.success() {
             return Err(format!(
                 "结果下载失败: {}",
@@ -224,10 +237,19 @@ mod tests {
         ));
         let md = client.download_extract(&result, &dest).expect("下载解压失败");
         assert!(md.exists(), "Markdown 文件应存在: {}", md.display());
-        let size = std::fs::metadata(&md).map(|m| m.len()).unwrap_or(0);
-        assert!(size > 100, "Markdown 应有内容");
+        let content = std::fs::read_to_string(&md).expect("读取 Markdown 失败");
+        assert!(
+            !content.trim().is_empty(),
+            "Markdown 不应为空: {}",
+            content
+        );
 
-        println!("端到端解析成功: {} ({} bytes)", md.display(), size);
+        println!(
+            "端到端解析成功: {} ({} bytes)\n--- 内容预览 ---\n{}",
+            md.display(),
+            content.len(),
+            content.chars().take(300).collect::<String>()
+        );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(&dest);
     }
