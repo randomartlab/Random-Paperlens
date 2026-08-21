@@ -1,14 +1,51 @@
 mod db;
+mod mineru;
 
+use mineru::MinerUClient;
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::json;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::Manager;
 
 /// 全局应用状态：数据库连接（互斥保护，供多命令共享）
 struct AppState {
     conn: Mutex<Connection>,
+    mineru: Option<MinerUClient>,
+}
+
+/// 从候选路径或环境变量加载 MINERU_API_KEY（.env 支持：KEY=VALUE 行）
+fn load_mineru_key(app: &tauri::AppHandle) -> Option<String> {
+    // 1. 环境变量优先
+    if let Ok(k) = std::env::var("MINERU_API_KEY") {
+        if !k.is_empty() {
+            return Some(k);
+        }
+    }
+    // 2. 候选 .env 路径：应用配置目录 / 当前目录（src-tauri）/ 项目根（父目录）
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(dir) = app.path().app_config_dir() {
+        candidates.push(dir.join(".env"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(".env"));
+        candidates.push(cwd.join("../.env"));
+    }
+    for path in candidates {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if let Some(v) = line.strip_prefix("MINERU_API_KEY=") {
+                    let v = v.trim().trim_matches('"').trim_matches('\'');
+                    if !v.is_empty() {
+                        return Some(v.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 文献条目（与前端共享的结构）
@@ -102,6 +139,52 @@ fn import_document(
     })
 }
 
+/// 调用 MinerU 云端 API 解析文献：上传 → 轮询 → 下载解压 → 更新状态
+#[tauri::command]
+fn parse_document(
+    doc_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let mineru = state
+        .mineru
+        .as_ref()
+        .ok_or("MinerU API Key 未配置（请检查项目 .env 或环境变量）")?;
+
+    // 1. 取文献源文件路径
+    let source_path: String = {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT file_path FROM documents WHERE id = ?1",
+            [&doc_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("文献不存在: {e}"))?
+    };
+
+    // 2. 上传 + 轮询（最长 10 分钟）
+    let batch_id = mineru.submit_file(Path::new(&source_path))?;
+    let result = mineru.poll_batch(&batch_id, 600, None)?;
+
+    // 3. 下载解压到 documents/{doc_id}/parsed/
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dest = data_dir.join("documents").join(&doc_id).join("parsed");
+    let md_path = mineru.download_extract(&result, &dest)?;
+
+    // 4. 更新状态
+    {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE documents SET status = 'parsed', updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(md_path.to_string_lossy().to_string())
+}
+
 /// 文献列表查询（M1 骨架，后续扩展筛选/分页）
 #[tauri::command]
 fn list_documents(
@@ -149,12 +232,18 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("library.db");
             let conn = db::init_db(&db_path).expect("failed to init database");
+            let mineru = load_mineru_key(app.handle()).map(MinerUClient::new);
             app.manage(AppState {
                 conn: Mutex::new(conn),
+                mineru,
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_documents, import_document])
+        .invoke_handler(tauri::generate_handler![
+            list_documents,
+            import_document,
+            parse_document
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

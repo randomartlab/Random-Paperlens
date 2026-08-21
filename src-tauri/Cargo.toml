@@ -26,4 +26,6 @@ serde_json = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 

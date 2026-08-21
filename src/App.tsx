@@ -195,6 +195,14 @@ function App() {
                   >
                     {STATUS_LABEL[d.status] ?? d.status}
                   </span>
+                  {d.status === "pending" && (
+                    <button
+                      onClick={() => handleParse(d)}
+                      className="rounded-lg bg-[#0b1326]/90 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#0b1326]"
+                    >
+                      解析
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
