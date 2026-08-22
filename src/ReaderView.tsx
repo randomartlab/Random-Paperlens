@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
+import rehypeRaw from "rehype-raw";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github.css";
 
@@ -72,7 +73,7 @@ function ReaderView({ docId, title, onBack }: Props) {
           <div className="prose prose-slate mx-auto max-w-3xl px-8 py-8 prose-headings:tracking-tight prose-a:text-blue-700">
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex, rehypeHighlight]}
+              rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}
               components={{
                 img: ({ src, alt }) => {
                   // 相对路径（MinerU 产物：images/xxx.jpg）→ 本地绝对路径 → asset 协议 URL

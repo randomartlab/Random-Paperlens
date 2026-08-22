@@ -215,10 +215,21 @@ fn start_parse(
         match (result, conn) {
             (Ok(md), Ok(conn)) => {
                 let now = chrono::Utc::now().to_rfc3339();
-                let _ = conn.execute(
-                    "UPDATE documents SET status = 'parsed', updated_at = ?1 WHERE id = ?2",
-                    rusqlite::params![now, doc_id],
-                );
+                // 从解析 Markdown 提取标题/作者并回填
+                if let Ok(content) = std::fs::read_to_string(&md) {
+                    let (t, a) = extract_title_and_authors(&content);
+                    let _ = conn.execute(
+                        "UPDATE documents SET status = 'parsed', updated_at = ?1,
+                             title = COALESCE(?2, title), authors = COALESCE(?3, authors)
+                         WHERE id = ?4",
+                        rusqlite::params![now, t, a, doc_id],
+                    );
+                } else {
+                    let _ = conn.execute(
+                        "UPDATE documents SET status = 'parsed', updated_at = ?1 WHERE id = ?2",
+                        rusqlite::params![now, doc_id],
+                    );
+                }
                 let _ = conn.execute(
                     "UPDATE tasks SET status = 'done', stage = 'parsed' WHERE id = ?1",
                     rusqlite::params![task_id],
@@ -289,6 +300,61 @@ fn read_parsed(
         content,
         base_dir: parsed_dir.to_string_lossy().to_string(),
     })
+}
+
+/// 从解析出的 Markdown 提取标题与作者（MinerU 产物：首行为 # 标题，随后为作者行）
+fn extract_title_and_authors(md: &str) -> (Option<String>, Option<String>) {
+    // 标题：第一个以 # 开头的行
+    let title = md
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| l.starts_with('#'))
+        .map(|l| l.trim_start_matches('#').trim().to_string())
+        .filter(|t| !t.is_empty() && t.len() <= 200);
+
+    // 作者：标题之后、摘要之前的短行，取逗号前部分（作者姓名）
+    let mut authors: Vec<String> = Vec::new();
+    let mut past_title = false;
+    for line in md.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            if !authors.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if l.starts_with('#') {
+            past_title = true;
+            continue;
+        }
+        if !past_title {
+            continue;
+        }
+        // 摘要/正文段落通常较长
+        if l.len() > 120 {
+            break;
+        }
+        let name = l.split(',').next().unwrap_or(l).trim();
+        if !name.is_empty()
+            && name.len() <= 60
+            && !authors.iter().any(|a| a == name)
+            && !name.contains("https://")
+        {
+            authors.push(name.to_string());
+            if authors.len() >= 5 {
+                break;
+            }
+        }
+    }
+
+    (
+        title,
+        if authors.is_empty() {
+            None
+        } else {
+            Some(authors.join(", "))
+        },
+    )
 }
 
 /// 文献列表查询（M1 骨架，后续扩展筛选/分页）
