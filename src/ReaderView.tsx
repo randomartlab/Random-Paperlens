@@ -15,7 +15,50 @@ interface Props {
   onBack: () => void;
 }
 
-/** 解析结果预览：图文 Markdown 渲染（GFM + 公式 + 代码高亮 + 本地图片） */
+/**
+ * 引用锚定预处理：
+ * 1) 为文末参考文献条目（References 章节后的 [n] 行）添加 <a id="ref-n"> 锚点
+ * 2) 将文中的 [n] / [n,m] / [n-m] 引用标记转为指向锚点的超链接
+ */
+function addCitationLinks(md: string): string {
+  const lines = md.split("\n");
+  let inRefs = false;
+  const withAnchors = lines.map((line) => {
+    const t = line.trim();
+    // 参考文献章节标题（英/中）
+    if (
+      inRefs === false &&
+      t.length < 30 &&
+      /^(References|REFERENCES|Reference|Bibliography|参考文献|引用文献)\s*$/.test(t)
+    ) {
+      inRefs = true;
+      return line;
+    }
+    if (inRefs) {
+      const m = t.match(/^\[(\d+)\]([.:、．\s]|$)/);
+      if (m) {
+        return `<a id="ref-${m[1]}"></a>${line}`;
+      }
+    }
+    return line;
+  });
+
+  // 文中引用 → 锚点链接（限 ≤8 个编号，避免误伤长编号列表）
+  const linked = withAnchors.join("\n").replace(
+    /\[(\d+(?:[\s,，\-–—]\s*\d+){0,7})\]/g,
+    (match, body: string) => {
+      const nums = body
+        .split(/[\s,，\-–—]+/)
+        .map((s: string) => parseInt(s, 10))
+        .filter((n: number) => Number.isFinite(n));
+      if (nums.length === 0) return match;
+      return nums.map((n) => `[${n}](#ref-${n})`).join(", ");
+    },
+  );
+  return linked;
+}
+
+/** 解析结果预览：图文 Markdown 渲染（GFM + 公式 + 代码高亮 + 本地图片 + 引用锚点） */
 function ReaderView({ docId, title, onBack }: Props) {
   const [content, setContent] = useState("");
   const [baseDir, setBaseDir] = useState("");
@@ -93,7 +136,7 @@ function ReaderView({ docId, title, onBack }: Props) {
                 },
               }}
             >
-              {content}
+              {addCitationLinks(content)}
             </ReactMarkdown>
           </div>
         )}
