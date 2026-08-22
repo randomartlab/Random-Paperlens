@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -14,18 +14,20 @@ interface Props {
   onBack: () => void;
 }
 
-/** 解析结果预览：图文 Markdown 渲染（GFM + 公式 + 代码高亮） */
+/** 解析结果预览：图文 Markdown 渲染（GFM + 公式 + 代码高亮 + 本地图片） */
 function ReaderView({ docId, title, onBack }: Props) {
   const [content, setContent] = useState("");
+  const [baseDir, setBaseDir] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    invoke<string>("read_parsed", { docId })
-      .then((c) => {
+    invoke<{ content: string; base_dir: string }>("read_parsed", { docId })
+      .then((r) => {
         if (!cancelled) {
-          setContent(c);
+          setContent(r.content);
+          setBaseDir(r.base_dir);
           setLoading(false);
         }
       })
@@ -71,6 +73,24 @@ function ReaderView({ docId, title, onBack }: Props) {
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
               rehypePlugins={[rehypeKatex, rehypeHighlight]}
+              components={{
+                img: ({ src, alt }) => {
+                  // 相对路径（MinerU 产物：images/xxx.jpg）→ 本地绝对路径 → asset 协议 URL
+                  let resolved = src;
+                  if (src && !/^https?:\/\//.test(src)) {
+                    resolved = convertFileSrc(
+                      `${baseDir}/${src.replace(/^\.\//, "")}`,
+                    );
+                  }
+                  return (
+                    <img
+                      src={resolved}
+                      alt={alt ?? ""}
+                      className="my-4 max-w-full rounded-lg border border-black/5"
+                    />
+                  );
+                },
+              }}
             >
               {content}
             </ReactMarkdown>

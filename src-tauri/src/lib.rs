@@ -247,13 +247,20 @@ fn start_parse(
     Ok(())
 }
 
+/// 已解析文献内容（含图片资源基础目录，供前端渲染本地图片）
+#[derive(Serialize)]
+struct ParsedDoc {
+    content: String,
+    base_dir: String,
+}
+
 /// 读取已解析的 Markdown 内容（用于预览视图）
 #[tauri::command]
 fn read_parsed(
     doc_id: String,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<String, String> {
+) -> Result<ParsedDoc, String> {
     {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
         let status: String = conn
@@ -277,7 +284,11 @@ fn read_parsed(
         .find(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
         .ok_or("未找到解析结果 Markdown")?;
 
-    std::fs::read_to_string(&md_path).map_err(|e| e.to_string())
+    let content = std::fs::read_to_string(&md_path).map_err(|e| e.to_string())?;
+    Ok(ParsedDoc {
+        content,
+        base_dir: parsed_dir.to_string_lossy().to_string(),
+    })
 }
 
 /// 文献列表查询（M1 骨架，后续扩展筛选/分页）
