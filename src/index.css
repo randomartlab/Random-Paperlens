@@ -1,13 +1,344 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* 文献阅读台全局样式（DESIGN.md token 将在此落地） */
+/* M4.4 暗色主题：语义 token 定义（浅色 :root / 深色 .dark） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  /* 中性色：背景 / 面板 / 次级表面 / 悬停 / 轨道 */
+  --color-canvas: #f7f8fa;
+  --color-panel: #ffffff;
+  --color-surface: #f7f8fa;
+  --color-hover: rgba(11, 19, 38, 0.05);
+  --color-track: rgba(11, 19, 38, 0.05);
+
+  /* 主色：主文本 + 主按钮（#0b1326），及按钮反色文字 */
+  --color-primary: #0b1326;
+  --color-primary-inverse: #ffffff;
+
+  /* 边框层次：弱分隔 / 控件边框 / 强调边框 */
+  --color-divider: rgba(11, 19, 38, 0.05);
+  --color-divider-strong: rgba(11, 19, 38, 0.1);
+  --color-divider-bold: rgba(11, 19, 38, 0.2);
+
+  /* 状态色：info / success / warning / danger（背景 + 前景 + 边框） */
+  --color-info-bg: #eff6ff;
+  --color-info-fg: #1d4ed8;
+  --color-info-border: #bfdbfe;
+  --color-success-bg: #ecfdf5;
+  --color-success-fg: #047857;
+  --color-success-border: #a7f3d0;
+  --color-warning-bg: #fffbeb;
+  --color-warning-fg: #b45309;
+  --color-warning-border: #fde68a;
+  --color-danger-bg: #fef2f2;
+  --color-danger-fg: #b91c1c;
+  --color-danger-border: #fecaca;
+
+  /* 句子联动高亮（原 bg-amber-200/70） */
+  --color-mark: rgba(253, 230, 138, 0.7);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --color-canvas: #14141f;
+  --color-panel: #1d1d2b;
+  --color-surface: #171722;
+  --color-hover: rgba(232, 234, 242, 0.08);
+  --color-track: rgba(232, 234, 242, 0.08);
+
+  --color-primary: #e8eaf2;
+  --color-primary-inverse: #14141f;
+
+  --color-divider: rgba(232, 234, 242, 0.06);
+  --color-divider-strong: rgba(232, 234, 242, 0.12);
+  --color-divider-bold: rgba(232, 234, 242, 0.22);
+
+  --color-info-bg: rgba(59, 130, 246, 0.15);
+  --color-info-fg: #93c5fd;
+  --color-info-border: rgba(59, 130, 246, 0.3);
+  --color-success-bg: rgba(16, 185, 129, 0.15);
+  --color-success-fg: #6ee7b7;
+  --color-success-border: rgba(16, 185, 129, 0.3);
+  --color-warning-bg: rgba(245, 158, 11, 0.15);
+  --color-warning-fg: #fcd34d;
+  --color-warning-border: rgba(245, 158, 11, 0.3);
+  --color-danger-bg: rgba(239, 68, 68, 0.15);
+  --color-danger-fg: #fca5a5;
+  --color-danger-border: rgba(239, 68, 68, 0.3);
+
+  --color-mark: rgba(180, 83, 9, 0.55);
+}
+
+/* 将语义 token 映射为 Tailwind 工具类（bg-canvas / text-primary / border-divider 等） */
+@theme inline {
+  --color-canvas: var(--color-canvas);
+  --color-panel: var(--color-panel);
+  --color-surface: var(--color-surface);
+  --color-hover: var(--color-hover);
+  --color-track: var(--color-track);
+  --color-primary: var(--color-primary);
+  --color-primary-inverse: var(--color-primary-inverse);
+  --color-divider: var(--color-divider);
+  --color-divider-strong: var(--color-divider-strong);
+  --color-divider-bold: var(--color-divider-bold);
+  --color-info-bg: var(--color-info-bg);
+  --color-info-fg: var(--color-info-fg);
+  --color-info-border: var(--color-info-border);
+  --color-success-bg: var(--color-success-bg);
+  --color-success-fg: var(--color-success-fg);
+  --color-success-border: var(--color-success-border);
+  --color-warning-bg: var(--color-warning-bg);
+  --color-warning-fg: var(--color-warning-fg);
+  --color-warning-border: var(--color-warning-border);
+  --color-danger-bg: var(--color-danger-bg);
+  --color-danger-fg: var(--color-danger-fg);
+  --color-danger-border: var(--color-danger-border);
+  --color-mark: var(--color-mark);
+}
+
+/* 文献阅读台全局样式 */
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
-  font-family: "Geist", -apple-system, "PingFang SC", "Helvetica Neue",
+  font-family: "Geist", -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue",
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: var(--color-canvas);
+}
+
+/* 主题切换过渡（由 App.tsx 临时挂载 .theme-transition 触发，200ms 后移除） */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    fill 0.15s ease !important;
+}
+
+/* M4.3 动效（Motion 2-4：状态过渡 ≤200ms，免额外依赖） */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.anim-fade-in {
+  animation: fade-in 0.18s ease-out both;
+}
+.anim-slide-up {
+  animation: slide-up 0.18s ease-out both;
+}
+.anim-scale-in {
+  animation: scale-in 0.18s ease-out both;
+}
+.anim-slide-down {
+  animation: slide-down 0.18s ease-out both;
+}
+
+/* 加载指示器（统一用于各视图加载态，跟随主色 token） */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, var(--color-primary) 15%, transparent);
+  border-top-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+  border-radius: 9999px;
+  animation: spin 0.7s linear infinite;
+}
+
+/* 暗色下 prose 正文适配（覆盖 @tailwindcss/typography 变量） */
+.dark .prose {
+  --tw-prose-body: #cbd5e1;
+  --tw-prose-headings: #f1f5f9;
+  --tw-prose-lead: #94a3b8;
+  --tw-prose-links: #93c5fd;
+  --tw-prose-bold: #f1f5f9;
+  --tw-prose-counters: #94a3b8;
+  --tw-prose-bullets: #94a3b8;
+  --tw-prose-hr: rgba(232, 234, 242, 0.12);
+  --tw-prose-quotes: #cbd5e1;
+  --tw-prose-quote-borders: rgba(232, 234, 242, 0.2);
+  --tw-prose-captions: #94a3b8;
+  --tw-prose-code: #e2e8f0;
+  --tw-prose-pre-code: #e2e8f0;
+  --tw-prose-pre-bg: #16161f;
+  --tw-prose-th-borders: rgba(232, 234, 242, 0.12);
+  --tw-prose-td-borders: rgba(232, 234, 242, 0.1);
+}
+
+/* 暗色下代码高亮（GitHub Dark 配色，覆盖 highlight.js github.css） */
+.dark .hljs {
+  background: #16161f;
+  color: #c9d1d9;
+}
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-literal,
+.dark .hljs-doctag {
+  color: #ff7b72;
+}
+.dark .hljs-string,
+.dark .hljs-regexp,
+.dark .hljs-addition {
+  color: #a5d6ff;
+}
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-name,
+.dark .hljs-selector-id {
+  color: #d2a8ff;
+}
+.dark .hljs-comment,
+.dark .hljs-quote,
+.dark .hljs-meta {
+  color: #8b949e;
+}
+.dark .hljs-number,
+.dark .hljs-symbol,
+.dark .hljs-bullet {
+  color: #f0883e;
+}
+.dark .hljs-built_in,
+.dark .hljs-type,
+.dark .hljs-attr,
+.dark .hljs-attribute {
+  color: #79c0ff;
+}
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-selector-attr {
+  color: #ffa657;
+}
+.dark .hljs-params {
+  color: #c9d1d9;
+}
+.dark .hljs-emphasis {
+  font-style: italic;
+}
+.dark .hljs-strong {
+  font-weight: 600;
+}
+
+/* 滚动条（跟随主题） */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(11, 19, 38, 0.18);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(11, 19, 38, 0.3);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(232, 234, 242, 0.18);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 234, 242, 0.3);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* 暗色下阴影加深 */
+.dark .shadow-sm {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+}
+.dark .shadow-md {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+}
+.dark .shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+}
+.dark .shadow-2xl {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* 暗色下 violet 品牌色适配（拆解/范式相关 chip、按钮，亮色保留原 tailwind 色值） */
+.dark .bg-violet-50 {
+  background-color: rgba(139, 92, 246, 0.15);
+}
+.dark .bg-violet-50\/50 {
+  background-color: rgba(139, 92, 246, 0.08);
+}
+.dark .text-violet-700 {
+  color: #c4b5fd;
+}
+.dark .border-violet-100 {
+  border-color: rgba(139, 92, 246, 0.2);
+}
+.dark .border-violet-200 {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+.dark .hover\:bg-violet-100:hover {
+  background-color: rgba(139, 92, 246, 0.25);
+}
+.dark .bg-violet-100 {
+  background-color: rgba(139, 92, 246, 0.1);
+}
+.dark .text-violet-500 {
+  color: #a78bfa;
+}
+
+/* 页面内 Markdown 表格（renderMdTable 注入的 border-black/10、bg-black/5）暗色适配 */
+.dark .border-black\/10 {
+  border-color: rgba(232, 234, 242, 0.12);
+}
+.dark .bg-black\/5 {
+  background-color: rgba(232, 234, 242, 0.08);
 }

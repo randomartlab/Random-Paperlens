@@ -71,6 +71,33 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         )?;
     }
 
+    if version < 2 {
+        // api_configs 增加 created_at（排序/展示用；旧库升级与新建库均适用）
+        conn.execute_batch(
+            "ALTER TABLE api_configs ADD COLUMN created_at TEXT;
+             PRAGMA user_version = 2;",
+        )?;
+    }
+
+    if version < 3 {
+        // settings 键值表：视觉模型（外挂图片分析）等全局配置
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            PRAGMA user_version = 3;",
+        )?;
+    }
+
+    if version < 4 {
+        // 阅读状态标记（F7）：unread 未读完 / read 已读完，由用户手动维护
+        conn.execute_batch(
+            "ALTER TABLE documents ADD COLUMN read_status TEXT NOT NULL DEFAULT 'unread';
+             PRAGMA user_version = 4;",
+        )?;
+    }
+
     Ok(())
 }
 
@@ -96,7 +123,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 4);
 
         // 验证表存在
         let tables: Vec<String> = conn

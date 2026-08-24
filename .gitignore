@@ -19,3 +19,10 @@ Thumbs.db
 
 # 日志
 *.log
+
+# 本地示例文件
+litdesk-sample.pdf
+
+# 回归样本 PDF（大文件，由 scripts/fetch_regression_samples.sh 按需拉取）
+samples/
+target/

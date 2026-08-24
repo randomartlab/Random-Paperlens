@@ -54,12 +54,18 @@ impl MinerUClient {
             .to_string();
 
         // 1. 申请上传链接
+        // 显式声明 language=auto（中英文自动识别）与 is_ocr=true（扫描版 PDF 也可靠提取），
+        // 避免扫描版中文文献因缺少 OCR 参数而乱码。
         let client = Self::http_client().map_err(|e| e.to_string())?;
         let resp = client
             .post(format!("{}/file-urls/batch", self.base))
             .headers(self.headers())
             .json(&serde_json::json!({
-                "files": [{ "name": file_name }],
+                "files": [{
+                    "name": file_name,
+                    "language": "auto",
+                    "is_ocr": true
+                }],
                 "model_version": "vlm"
             }))
             .send()

@@ -1,0 +1,194 @@
+//! 拆解执行器（M3.3/3.4）
+//!
+//! 依据《research/design-schemas.md》§5 实现：
+//! - 逐字段调用 LLM（每字段独立请求，便于进度显示与断点续存）
+//! - 引用锚定：文献内容带段落编号，强制要求引用原文段落，禁编造
+//! - 范式专属拆解指令（design-schemas §4.2）
+//! - 每个字段结果按类型渲染（text/list/table/image/enum）
+
+use serde::{Deserialize, Serialize};
+
+use crate::fields::FieldDef;
+use crate::paradigm::ParadigmRecognition;
+use crate::translate::{TranslateError, Translator};
+
+/// 单个字段的拆解结果（持久化结构）
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DigestFieldResult {
+    pub name: String,
+    pub label: String,
+    pub ftype: String,
+    pub source: String,
+    pub zh: String,          // 中文拆解（内联 [段落 N] 引用）
+    pub en: String,          // 英文拆解（双语对照）
+    pub table: Option<String>, // 表格类字段的 Markdown 表格（中英共用）
+    pub failed: bool,        // 该字段拆解失败（占位而非编造）
+}
+
+/// 把解析 markdown 转成带段落编号的上下文（供引用锚定）
+pub fn numbered_context(md: &str, cap_chars: usize) -> String {
+    let segs = crate::translate::split_markdown(md);
+    let mut out = String::new();
+    let mut para_no = 0usize;
+    for s in segs {
+        if s.kind == "paragraph" {
+            para_no += 1;
+            out.push_str(&format!("[段落 {para_no}]\n{}\n\n", s.content));
+        } else if s.kind == "heading" {
+            out.push_str(&format!(
+                "【章节】{}\n\n",
+                s.content.trim_start_matches('#').trim()
+            ));
+        }
+        if out.chars().count() >= cap_chars {
+            break;
+        }
+    }
+    out
+}
+
+/// 范式专属拆解核对指令（design-schemas §4.2）
+fn paradigm_instruction(id: &str) -> &'static str {
+    match id {
+        "paradigm-experimental-baseline" => {
+            "重点核对：基线是否公平（同设置/同资源）；指标是否齐备；消融是否解释了每个组件的贡献；SOTA 对比是否诚实"
+        }
+        "paradigm-rct" => {
+            "重点核对：随机化与盲法是否完备；样本量估算是否合理；主要结局是否注册一致；harm 报告是否完整"
+        }
+        "paradigm-empirical-stat" => {
+            "重点核对：识别策略是否可信；内生性处理是否充分；稳健性检验覆盖哪些维度；结果是否支持因果解释"
+        }
+        "paradigm-theoretical" => {
+            "重点核对：概念界定是否清晰；论证前提与推理是否自洽；反驳是否回应到位；思想谱系定位是否准确"
+        }
+        "paradigm-case-study" => {
+            "重点核对：案例选择是否有依据；证据是否多源三角验证；分析技术是否与问题匹配；命题是否可推广"
+        }
+        "paradigm-systematic-review" => {
+            "重点核对：检索策略是否可复现；纳排标准是否明确；质量评估工具是否恰当；异质性与偏倚是否报告"
+        }
+        "paradigm-computational-sim" => {
+            "重点核对：Verification 与 Validation 是否严格区分；收敛性是否验证；不确定性是否量化；模型假设是否声明"
+        }
+        "paradigm-design-science" => {
+            "重点核对：问题-目标-设计是否对齐；评估方法是否匹配构件类型；设计理论贡献是否明确"
+        }
+        _ => "",
+    }
+}
+
+/// 拆解系统提示词：角色 + 引用锚定规则 + 范式专属核对指令
+pub fn build_system_prompt(rec: &ParadigmRecognition, strategy: &str, field_count: usize) -> String {
+    let instruction = paradigm_instruction(&rec.paradigm_id);
+    format!(
+        "你是一名{rec_name}领域的论文拆解专家。请对以下文献按给定字段逐一拆解。\n\
+         文献范式：{rec_name}（{cross_type}，字段合并策略：{strategy}，共 {field_count} 个字段）。\n\
+         【规则】\n\
+         1. 每个字段的输出必须引用原文段落（引用格式：[段落 N]，或给出原文关键摘录）；\n\
+         2. 无法从原文定位支撑的字段，必须输出“引用缺失”四个字，严禁编造内容；\n\
+         3. 表格类字段输出 Markdown 表格；图片类字段输出图片描述并注明其在原文中的位置；\n\
+         4. 保留原文术语，不做二次翻译；\n\
+         5. 只输出该字段的拆解内容本身，不要输出字段名、解释性开场白或任何与内容无关的文字。\n\
+         {instruction}\n\
+         {review_note}",
+        rec_name = rec.paradigm_name,
+        cross_type = rec.cross_type,
+        strategy = strategy,
+        field_count = field_count,
+        instruction = if instruction.is_empty() {
+            String::new()
+        } else {
+            format!("\n         【范式核对要求】{instruction}")
+        },
+        review_note = "若文献明显包含多学科交叉，除主范式视角外，可补充说明交叉学科视角。"
+    )
+}
+
+/// 单个字段的用户提示词：文献上下文 + 字段要求 + 类型输出约束 + 双语 JSON 输出格式
+pub fn build_field_user(field: &FieldDef, context: &str) -> String {
+    let type_hint = match field.ftype.as_str() {
+        "table" => "Markdown 表格（表头 + 数据行，放在 table 字段）",
+        "list[string]" => "项目符号列表（每行一个条目）",
+        "enum" => "从可选值中选择一个",
+        "image" => "描述该图（类型、内容要点）并注明其在原文中的位置（[段落 N]）",
+        "integer" => "一个整数",
+        "string" => "一句简洁的结论文字",
+        "code" => "代码块",
+        _ => "简洁的段落文字",
+    };
+    let enum_hint = if !field.enum_values.is_empty() {
+        format!("（可选值：{}）", field.enum_values.join(" / "))
+    } else {
+        String::new()
+    };
+    format!(
+        "【文献内容】（段落编号用于引用锚定）\n{context}\n\n【待拆解字段】\n\
+         字段：{label}\n说明：{desc}\n类型：{ftype} → {type_hint}{enum_hint}\n\n\
+         【输出格式】严格输出一个 JSON 对象，不要输出任何其他文字：\n\
+         {{\"zh\": \"中文拆解，必须内联标注所依据的原文段落，格式 [段落 N]（至少一处；无法定位时只输出 引用缺失）\", \
+         \"en\": \"英文拆解，与 zh 内容一一对应\", \
+         \"table\": \"仅表格类字段输出 Markdown 表格，其余字段省略此项\"}}",
+        label = field.label,
+        desc = field.description,
+        ftype = field.ftype,
+    )
+}
+
+/// 解析模型输出为 {zh, en, table}；JSON 解析失败时兜底整段作为 zh
+fn parse_digest_response(raw: &str, ftype: &str) -> (String, String, Option<String>) {
+    let cleaned = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(cleaned) {
+        let zh = v["zh"].as_str().unwrap_or("").to_string();
+        let en = v["en"].as_str().unwrap_or("").to_string();
+        let table = if ftype == "table" {
+            v["table"].as_str().map(|s| s.to_string())
+        } else {
+            None
+        };
+        if !zh.is_empty() {
+            return (zh, en, table);
+        }
+    }
+    (raw.trim().to_string(), String::new(), None)
+}
+
+/// 中文拆解是否含段落引用（或已声明引用缺失）
+fn has_citation(zh: &str) -> bool {
+    zh.contains("引用缺失")
+        || zh.contains("[段落")
+        || zh.contains("段落 ")
+        || zh.contains("（段落")
+}
+
+/// 逐字段拆解（双语 JSON 输出）：可恢复错误重试 1 次；缺段落引用时带提醒重试 1 次
+pub fn digest_field(
+    translator: &Translator,
+    system: &str,
+    user: &str,
+    ftype: &str,
+) -> Result<(String, String, Option<String>), TranslateError> {
+    let call = || translator.chat(system, user, 0.3);
+    let mut raw = match call() {
+        Err(e) if e.retryable => call()?,
+        r => r?,
+    };
+    let mut parsed = parse_digest_response(&raw, ftype);
+    // 引用校验：未标注段落且非"引用缺失" → 带提醒重试一次
+    if !has_citation(&parsed.0) {
+        let retry_user = format!(
+            "{user}\n\n你的上一条输出缺少段落引用。请重新输出，并必须在中文拆解中内联标注依据段落，\
+             格式 [段落 N]；若确实无法定位，只输出 {{\"zh\":\"引用缺失\",\"en\":\"Citation missing\"}}。"
+        );
+        if let Ok(r2) = translator.chat(system, &retry_user, 0.3) {
+            raw = r2;
+            parsed = parse_digest_response(&raw, ftype);
+        }
+    }
+    Ok(parsed)
+}
