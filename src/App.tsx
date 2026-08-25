@@ -519,7 +519,7 @@ function App() {
             Rd学术阅读器
           </h1>
           <span className="rounded-full bg-primary/5 px-2.5 py-0.5 text-xs text-primary/60">
-            v0.3.0
+            v0.3.1
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-primary/50">
