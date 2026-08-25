@@ -207,3 +207,105 @@ pub fn spawn_print_html(
 
     Ok(tmp_path.to_string_lossy().to_string())
 }
+
+/// 批量删除笔记（跳过不存在的文件），返回实际删除数量
+#[tauri::command]
+pub fn delete_notes_batch(
+    names: Vec<String>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    let dir = notes_dir(&app)?;
+    let mut removed = 0usize;
+    for name in names {
+        let path = dir.join(format!("{}.md", sanitize_name(&name)));
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("删除笔记「{name}」失败: {e}"))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// 批量导出笔记到指定目录（md / html），返回导出成功的文件路径列表
+#[tauri::command]
+pub fn export_notes_batch(
+    names: Vec<String>,
+    format: String, // "md" | "html"
+    out_dir: String,
+    app: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    let dir = notes_dir(&app)?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
+    let mut written = Vec::new();
+    for name in names {
+        let n = sanitize_name(&name);
+        let content = match std::fs::read_to_string(dir.join(format!("{n}.md"))) {
+            Ok(c) => c,
+            Err(_) => continue, // 跳过已被外部删除的笔记
+        };
+        let data = if format == "html" {
+            let body = crate::export::md_to_html(&content, &dir);
+            wrap_html(&n, &body)
+        } else {
+            content
+        };
+        let out_path = std::path::Path::new(&out_dir).join(format!("{n}.{format}"));
+        std::fs::write(&out_path, data).map_err(|e| format!("写入「{n}」失败: {e}"))?;
+        written.push(out_path.to_string_lossy().to_string());
+    }
+    Ok(written)
+}
+
+/// 重命名笔记（.md 文件改名；目标已存在时报错，避免覆盖）
+#[tauri::command]
+pub fn rename_note(
+    old_name: String,
+    new_name: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let dir = notes_dir(&app)?;
+    let src = dir.join(format!("{}.md", sanitize_name(&old_name)));
+    let dst_name = sanitize_name(&new_name);
+    let dst = dir.join(format!("{dst_name}.md"));
+    if !src.exists() {
+        return Err(format!("笔记「{old_name}」不存在"));
+    }
+    if src == dst {
+        return Ok(dst_name);
+    }
+    if dst.exists() {
+        return Err(format!("已存在同名笔记「{dst_name}」，请换一个名称"));
+    }
+    std::fs::rename(&src, &dst).map_err(|e| format!("重命名失败: {e}"))?;
+    Ok(dst_name)
+}
+
+/// 批量查找替换：对选中笔记执行纯文本替换，返回每篇替换次数
+#[tauri::command]
+pub fn replace_in_notes(
+    names: Vec<String>,
+    search: String,
+    replace: String,
+    app: tauri::AppHandle,
+) -> Result<Vec<serde_json::Value>, String> {
+    if search.is_empty() {
+        return Err("查找内容不能为空".to_string());
+    }
+    let dir = notes_dir(&app)?;
+    let mut out = Vec::new();
+    for name in names {
+        let n = sanitize_name(&name);
+        let path = dir.join(format!("{n}.md"));
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let count = content.matches(&search).count();
+        if count > 0 {
+            let updated = content.replace(&search, &replace);
+            std::fs::write(&path, updated).map_err(|e| format!("写入「{n}」失败: {e}"))?;
+        }
+        out.push(serde_json::json!({ "name": n, "count": count }));
+    }
+    Ok(out)
+}

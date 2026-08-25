@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { appDataDir } from "@tauri-apps/api/path";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -22,6 +22,14 @@ function NotesView() {
   const [newName, setNewName] = useState("");
   const [saving, setSaving] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 批量管理状态
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [showReplace, setShowReplace] = useState(false);
+  const [replaceSearch, setReplaceSearch] = useState("");
+  const [replaceWith, setReplaceWith] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -148,6 +156,121 @@ function NotesView() {
     }
   };
 
+  // —— 批量管理 ——
+  const toggleChecked = (name: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setChecked((prev) =>
+      prev.size === notes.length && notes.length > 0
+        ? new Set()
+        : new Set(notes.map((n) => n.name)),
+    );
+  };
+
+  const removeChecked = async () => {
+    const names = [...checked];
+    if (names.length === 0) return;
+    if (!window.confirm(`确定删除选中的 ${names.length} 篇笔记？此操作不可恢复。`)) return;
+    setBusy(true);
+    try {
+      await invoke("delete_notes_batch", { names });
+      if (selected && checked.has(selected)) {
+        setSelected(null);
+        setContent("");
+        setDirty(false);
+      }
+      setChecked(new Set());
+      setNotice(null);
+      await refresh();
+    } catch (e) {
+      setNotice(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportChecked = async (format: "md" | "html") => {
+    const names = [...checked];
+    if (names.length === 0) return;
+    const outDir = await open({
+      directory: true,
+      title: `选择导出目录（${names.length} 篇 · ${format.toUpperCase()}）`,
+    });
+    if (typeof outDir !== "string") return; // 用户取消
+    setBusy(true);
+    try {
+      const files = await invoke<string[]>("export_notes_batch", { names, format, outDir });
+      setNotice(`已导出 ${files.length} 篇到所选目录`);
+    } catch (e) {
+      setNotice(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const replaceChecked = async () => {
+    const names = [...checked];
+    if (names.length === 0) return;
+    const search = replaceSearch.trim();
+    if (!search) {
+      setNotice("查找内容不能为空");
+      return;
+    }
+    setBusy(true);
+    try {
+      const results = await invoke<{ name: string; count: number }[]>("replace_in_notes", {
+        names,
+        search,
+        replace: replaceWith,
+      });
+      const total = results.reduce((s, r) => s + r.count, 0);
+      setReplaceSearch("");
+      setReplaceWith("");
+      setShowReplace(false);
+      setNotice(`替换完成：共 ${total} 处（${results.filter((r) => r.count > 0).length} 篇受影响）`);
+      await refresh();
+      if (selected) {
+        const r = await invoke<{ name: string; content: string }>("read_note", {
+          name: selected,
+        });
+        setContent(r.content);
+        setDirty(false);
+      }
+    } catch (e) {
+      setNotice(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startRename = (name: string) => {
+    setRenaming(name);
+    setRenameValue(name);
+  };
+
+  const commitRename = async () => {
+    if (!renaming) return;
+    const oldName = renaming;
+    const target = renameValue.trim();
+    setRenaming(null);
+    if (!target || target === oldName) return;
+    try {
+      const n = await invoke<string>("rename_note", { oldName, newName: target });
+      if (selected === oldName) setSelected(n);
+      setNotice(null);
+      await refresh();
+    } catch (e) {
+      setNotice(String(e));
+    }
+  };
+
   const btnCls =
     "rounded-md border border-divider-strong px-2.5 py-1 text-xs text-primary/70 hover:bg-hover";
   const primaryBtnCls =
@@ -180,6 +303,94 @@ function NotesView() {
             </button>
           </div>
         </div>
+        {/* 批量操作栏 */}
+        <div className="flex items-center gap-1.5 border-b border-divider px-2 py-1.5">
+          <button
+            onClick={toggleAll}
+            className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-primary/60 hover:bg-hover hover:text-primary"
+          >
+            {checked.size === notes.length && notes.length > 0 ? "取消全选" : "全选"}
+          </button>
+          {checked.size > 0 && (
+            <span className="shrink-0 text-[11px] text-primary/45">已选 {checked.size}</span>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => void exportChecked("md")}
+              disabled={checked.size === 0 || busy}
+              className="rounded border border-divider-strong px-1.5 py-0.5 text-[11px] text-primary/70 hover:bg-hover disabled:opacity-40"
+              title="批量导出 Markdown 到目录"
+            >
+              导出 md
+            </button>
+            <button
+              onClick={() => void exportChecked("html")}
+              disabled={checked.size === 0 || busy}
+              className="rounded border border-divider-strong px-1.5 py-0.5 text-[11px] text-primary/70 hover:bg-hover disabled:opacity-40"
+              title="批量导出 HTML 到目录"
+            >
+              导出 html
+            </button>
+            <button
+              onClick={() => setShowReplace(!showReplace)}
+              disabled={checked.size === 0 || busy}
+              className={`rounded border px-1.5 py-0.5 text-[11px] hover:bg-hover disabled:opacity-40 ${
+                showReplace
+                  ? "border-warning-border bg-warning-bg text-warning-fg"
+                  : "border-divider-strong text-warning-fg"
+              }`}
+              title="对选中笔记批量查找替换"
+            >
+              替换
+            </button>
+            <button
+              onClick={() => void removeChecked()}
+              disabled={checked.size === 0 || busy}
+              className="rounded border border-divider-strong px-1.5 py-0.5 text-[11px] text-danger-fg hover:bg-danger-bg disabled:opacity-40"
+              title="批量删除选中笔记"
+            >
+              删除
+            </button>
+          </div>
+        </div>
+        {/* 批量替换面板 */}
+        {showReplace && (
+          <div className="border-b border-divider bg-warning-bg/25 p-2">
+            <div className="flex gap-1.5">
+              <input
+                className="w-full min-w-0 rounded-md border border-divider-strong bg-panel px-2 py-1 text-xs outline-none focus:border-warning-border"
+                placeholder="查找内容"
+                value={replaceSearch}
+                onChange={(e) => setReplaceSearch(e.target.value)}
+              />
+              <input
+                className="w-full min-w-0 rounded-md border border-divider-strong bg-panel px-2 py-1 text-xs outline-none focus:border-warning-border"
+                placeholder="替换为"
+                value={replaceWith}
+                onChange={(e) => setReplaceWith(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void replaceChecked()}
+              />
+            </div>
+            <div className="mt-1.5 flex items-center justify-between">
+              <span className="text-[11px] text-primary/45">将对选中的 {checked.size} 篇执行纯文本替换</span>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setShowReplace(false)}
+                  className="rounded border border-divider-strong px-2 py-0.5 text-[11px] text-primary/70 hover:bg-hover"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => void replaceChecked()}
+                  disabled={busy}
+                  className="rounded bg-warning-fg px-2 py-0.5 text-[11px] font-medium text-warning-bg hover:opacity-90 disabled:opacity-40"
+                >
+                  应用替换
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-1.5">
           {notes.length === 0 ? (
             <div className="px-2 py-6 text-center text-xs text-primary/45">
@@ -189,27 +400,63 @@ function NotesView() {
             notes.map((n) => (
               <div
                 key={n.name}
-                onClick={() => openNote(n.name)}
-                className={`group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 transition-colors ${
+                className={`group flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 transition-colors ${
                   selected === n.name ? "bg-primary/10" : "hover:bg-hover"
                 }`}
               >
-                <div className="min-w-0">
-                  <div className="truncate text-[13px] font-medium">{n.name}</div>
-                  <div className="mt-0.5 text-[11px] text-primary/40">
-                    {new Date(n.updated_at).toLocaleString()}
+                <input
+                  type="checkbox"
+                  checked={checked.has(n.name)}
+                  onChange={() => toggleChecked(n.name)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="h-3.5 w-3.5 shrink-0 accent-[var(--color-primary)]"
+                  title="选择以批量操作"
+                />
+                {renaming === n.name ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void commitRename();
+                      if (e.key === "Escape") setRenaming(null);
+                    }}
+                    onBlur={() => void commitRename()}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full min-w-0 rounded border border-primary/50 bg-panel px-1.5 py-0.5 text-[13px] font-medium outline-none"
+                  />
+                ) : (
+                  <button onClick={() => openNote(n.name)} className="min-w-0 flex-1 text-left">
+                    <div className="truncate text-[13px] font-medium">{n.name}</div>
+                    <div className="mt-0.5 text-[11px] text-primary/40">
+                      {new Date(n.updated_at).toLocaleString()}
+                    </div>
+                  </button>
+                )}
+                {renaming !== n.name && (
+                  <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(n.name);
+                      }}
+                      className="rounded px-1 py-0.5 text-[11px] text-primary/60 hover:bg-hover hover:text-primary"
+                      title="重命名笔记"
+                    >
+                      改名
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeNote(n.name);
+                      }}
+                      className="rounded px-1 py-0.5 text-[11px] text-danger-fg hover:bg-danger-bg"
+                      title="删除笔记"
+                    >
+                      删
+                    </button>
                   </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeNote(n.name);
-                  }}
-                  className="ml-1 hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] text-danger-fg hover:bg-danger-bg group-hover:block"
-                  title="删除笔记"
-                >
-                  删
-                </button>
+                )}
               </div>
             ))
           )}

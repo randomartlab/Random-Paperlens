@@ -12,7 +12,10 @@ mod stats;
 mod translate;
 
 use mineru::MinerUClient;
-use crate::notes::{delete_note, export_note, list_notes, print_note, read_note, save_note};
+use crate::notes::{
+    delete_note, delete_notes_batch, export_note, export_notes_batch, list_notes, print_note,
+    read_note, rename_note, replace_in_notes, save_note,
+};
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -34,6 +37,127 @@ struct AppState {
     conn: Mutex<Connection>,
     mineru: Option<MinerUClient>,
     translation_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+/// 任务中心行（不包含任何密钥信息）
+#[derive(Serialize)]
+struct TaskRow {
+    id: String,
+    doc_id: String,
+    title: String,
+    #[serde(rename = "type")]
+    task_type: String,
+    status: String,
+    progress: f64,
+    stage: String,
+    detail: String,
+    error: String,
+    created_at: String,
+    updated_at: String,
+}
+
+/// 任务中心：列出全部后台任务（解析 / 翻译 / 拆解），按更新时间倒序
+#[tauri::command]
+fn list_tasks(state: tauri::State<'_, AppState>) -> Result<Vec<TaskRow>, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.id, t.doc_id, COALESCE(d.title, '未知文献'), t.type, t.status, t.progress,
+                    COALESCE(t.stage, ''), COALESCE(t.detail, ''), COALESCE(t.error, ''),
+                    t.created_at, COALESCE(t.updated_at, t.created_at)
+             FROM tasks t
+             LEFT JOIN documents d ON d.id = t.doc_id
+             ORDER BY COALESCE(t.updated_at, t.created_at) DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(TaskRow {
+                id: r.get(0)?,
+                doc_id: r.get(1)?,
+                title: r.get(2)?,
+                task_type: r.get(3)?,
+                status: r.get(4)?,
+                progress: r.get(5)?,
+                stage: r.get(6)?,
+                detail: r.get(7)?,
+                error: r.get(8)?,
+                created_at: r.get(9)?,
+                updated_at: r.get(10)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// 清空已完成 / 失败的历史任务记录
+#[tauri::command]
+fn clear_finished_tasks(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM tasks WHERE status IN ('done', 'failed')",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 删除单条已完成 / 失败的任务记录（运行中的任务不允许删除）
+#[tauri::command]
+fn delete_task(task_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM tasks WHERE id = ?1 AND status IN ('done', 'failed')",
+        [&task_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 新建任务记录（running）
+fn insert_task(
+    conn: &Connection,
+    task_id: &str,
+    doc_id: &str,
+    kind: &str,
+    detail: Option<&str>,
+) -> Result<(), String> {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO tasks (id, doc_id, type, status, progress, stage, detail, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'running', 0, '准备', ?4, ?5, ?5)",
+        rusqlite::params![task_id, doc_id, kind, detail.unwrap_or_default(), now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 更新任务记录（进度 / 阶段 / 详情 / 状态 / 错误）
+fn update_task_status(
+    conn: &Connection,
+    task_id: &str,
+    status: &str,
+    progress: f64,
+    stage: &str,
+    detail: &str,
+    error: Option<&str>,
+) {
+    let _ = conn.execute(
+        "UPDATE tasks SET status = ?1, progress = ?2, stage = ?3, detail = ?4,
+                error = ?5, updated_at = ?6
+         WHERE id = ?7",
+        rusqlite::params![
+            status,
+            progress,
+            stage,
+            detail,
+            error.unwrap_or_default(),
+            now_iso(),
+            task_id
+        ],
+    );
 }
 
 /// 加载 MINERU_API_KEY：优先用户在设置页填写的 Key（settings 表），
@@ -222,12 +346,7 @@ fn start_parse(
     let task_id = uuid::Uuid::new_v4().to_string();
     {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO tasks (id, doc_id, type, status, created_at) VALUES (?1, ?2, 'parse', 'running', ?3)",
-            rusqlite::params![task_id, doc_id, now],
-        )
-        .map_err(|e| e.to_string())?;
+        insert_task(&conn, &task_id, &doc_id, "parse", Some("开始解析"))?;
     }
 
     // 3. 后台线程执行解析，事件推送进度与结果
@@ -236,20 +355,31 @@ fn start_parse(
         let emit = |event: &str, payload: serde_json::Value| {
             let _ = app2.emit(event, payload);
         };
+        let update_task = |status: &str, progress: f64, stage: &str, detail: &str, error: Option<&str>| {
+            if let Some(st) = app2.try_state::<AppState>() {
+                if let Ok(conn) = st.conn.lock() {
+                    update_task_status(&conn, &task_id, status, progress, stage, detail, error);
+                }
+            }
+        };
+        update_task("running", 0.0, "准备", "开始解析", None);
         emit(
             "parse-progress",
             json!({ "doc_id": doc_id, "stage": "上传中", "progress": 0.05 }),
         );
+        update_task("running", 0.05, "上传中", "提交 MinerU", None);
 
         let t_parse = std::time::Instant::now();
 
         let result = (|| -> Result<String, String> {
             let batch_id = mineru.submit_file(Path::new(&source_path))?;
+            update_task("running", 0.4, "解析中", "MinerU 已接收", None);
             emit(
                 "parse-progress",
                 json!({ "doc_id": doc_id, "stage": "解析中", "progress": 0.4 }),
             );
             let r = mineru.poll_batch(&batch_id, 600, Some(&|p: &str| {
+                update_task("running", 0.6, "解析中", p, None);
                 emit(
                     "parse-progress",
                     json!({ "doc_id": doc_id, "stage": "解析中", "progress": 0.6, "detail": p }),
@@ -257,6 +387,7 @@ fn start_parse(
             }))?;
             let dest = data_dir.join("documents").join(&doc_id).join("parsed");
             let md = mineru.download_extract(&r, &dest)?;
+            update_task("running", 1.0, "完成", "解析完成", None);
             emit(
                 "parse-progress",
                 json!({ "doc_id": doc_id, "stage": "完成", "progress": 1.0 }),
@@ -291,20 +422,21 @@ fn start_parse(
                         rusqlite::params![now, doc_id],
                     );
                 }
-                let _ = conn.execute(
-                    "UPDATE tasks SET status = 'done', stage = 'parsed' WHERE id = ?1",
-                    rusqlite::params![task_id],
-                );
+                update_task_status(&conn, &task_id, "done", 1.0, "解析完成", "已生成 Markdown", None);
                 drop(conn);
                 emit("parse-done", json!({ "doc_id": doc_id, "md_path": md }));
             }
             (Err(e), Ok(conn)) => {
-                let now = chrono::Utc::now().to_rfc3339();
                 let err_msg = error_code::err(error_code::PARSE_FAILED, &e);
                 logging::error(&format!("解析失败 doc={doc_id}: {e}"));
-                let _ = conn.execute(
-                    "UPDATE tasks SET status = 'failed', error = ?1, updated_at = ?2 WHERE id = ?3",
-                    rusqlite::params![err_msg, now, task_id],
+                update_task_status(
+                    &conn,
+                    &task_id,
+                    "failed",
+                    0.0,
+                    "解析失败",
+                    "",
+                    Some(&err_msg),
                 );
                 drop(conn);
                 emit("parse-failed", json!({ "doc_id": doc_id, "error": err_msg }));
@@ -568,6 +700,13 @@ fn start_translate(
         .cloned()
         .collect();
 
+    // 4.1 记录翻译任务（running）
+    let task_id = uuid::Uuid::new_v4().to_string();
+    {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        insert_task(&conn, &task_id, &doc_id, "translate", Some(&direction))?;
+    }
+
     // 5. 注册翻译控制标志（暂停/继续）并启动后台线程
     let ctrl = Arc::new(AtomicBool::new(false));
     {
@@ -582,6 +721,14 @@ fn start_translate(
         let emit = |event: &str, payload: serde_json::Value| {
             let _ = app2.emit(event, payload);
         };
+        let update_task = |status: &str, progress: f64, stage: &str, detail: &str, error: Option<&str>| {
+            if let Some(st) = app2.try_state::<AppState>() {
+                if let Ok(conn) = st.conn.lock() {
+                    update_task_status(&conn, &task_id, status, progress, stage, detail, error);
+                }
+            }
+        };
+        update_task("running", 0.0, "准备", &direction, None);
         emit(
             "translate-progress",
             json!({ "doc_id": doc_id, "stage": "准备", "progress": 0.0 }),
@@ -643,12 +790,15 @@ fn start_translate(
                     serde_json::to_string(done_map_ref).unwrap_or_default(),
                 );
                 let n = done_count_ref.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                let progress = n as f64 / total as f64;
+                let detail = format!("{n}/{total} · {kind}");
+                update_task("running", progress, "翻译中", &detail, None);
                 emit(
                     "translate-progress",
                     json!({
                         "doc_id": doc_id, "stage": "翻译中",
-                        "progress": n as f64 / total as f64,
-                        "detail": format!("{n}/{total} · {kind}")
+                        "progress": progress,
+                        "detail": detail
                     }),
                 );
                 // 实时推送该段原文与译文，前端阅读视图据此逐段渲染译文/双语
@@ -696,14 +846,21 @@ fn start_translate(
                 }
 
                 match write_result {
-                    Ok(_) => emit(
-                        "translate-done",
-                        json!({ "doc_id": doc_id, "path": out_path.to_string_lossy() }),
-                    ),
-                    Err(e) => emit(
-                        "translate-failed",
-                        json!({ "doc_id": doc_id, "error": format!("保存翻译结果失败: {e}") }),
-                    ),
+                    Ok(_) => {
+                        update_task("done", 1.0, "翻译完成", "已保存译文", None);
+                        emit(
+                            "translate-done",
+                            json!({ "doc_id": doc_id, "path": out_path.to_string_lossy() }),
+                        );
+                    }
+                    Err(e) => {
+                        let msg = format!("保存翻译结果失败: {e}");
+                        update_task("failed", 1.0, "保存失败", &msg, Some(&msg));
+                        emit(
+                            "translate-failed",
+                            json!({ "doc_id": doc_id, "error": msg }),
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -714,6 +871,9 @@ fn start_translate(
                 );
                 let code = error_code::from_translate_category(&e.category);
                 logging::error(&format!("翻译失败 doc={doc_id} [{code}]: {}", e.message));
+                let progress = done_count.load(std::sync::atomic::Ordering::SeqCst) as f64 / total as f64;
+                let msg = format!("[{code}] {}", e.message);
+                update_task("failed", progress, "翻译失败", &msg, Some(&msg));
                 let mut err_val = serde_json::to_value(&e).unwrap_or_default();
                 if let Some(obj) = err_val.as_object_mut() {
                     obj.insert("code".to_string(), json!(code));
@@ -921,12 +1081,27 @@ fn start_digest(
         .ok_or("未找到解析结果 Markdown")?;
     let md = std::fs::read_to_string(&md_path).map_err(|e| e.to_string())?;
 
+    // 2.1 记录拆解任务（running）
+    let task_id = uuid::Uuid::new_v4().to_string();
+    {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        insert_task(&conn, &task_id, &doc_id, "digest", Some("开始拆解"))?;
+    }
+
     // 3. 后台线程执行拆解
     let app2 = app.clone();
     std::thread::spawn(move || {
         let emit = |event: &str, payload: serde_json::Value| {
             let _ = app2.emit(event, payload);
         };
+        let update_task = |status: &str, progress: f64, stage: &str, detail: &str, error: Option<&str>| {
+            if let Some(st) = app2.try_state::<AppState>() {
+                if let Ok(conn) = st.conn.lock() {
+                    update_task_status(&conn, &task_id, status, progress, stage, detail, error);
+                }
+            }
+        };
+        update_task("running", 0.0, "准备", "开始拆解", None);
         emit(
             "digest-progress",
             json!({ "doc_id": doc_id, "stage": "准备", "progress": 0.0 }),
@@ -942,6 +1117,7 @@ fn start_digest(
             Ok(i) => i,
             Err(e) => {
                 logging::error(&format!("拆解准备失败 doc={doc_id}: {e}"));
+                update_task("failed", 0.0, "准备失败", &e, Some(&e));
                 emit(
                     "digest-failed",
                     json!({ "doc_id": doc_id, "error": { "category": "internal", "code": error_code::DIGEST_FAILED, "message": e, "hint": "请确认文献已解析后再试" } }),
@@ -955,6 +1131,7 @@ fn start_digest(
         let total = plan.fields.len();
         if total == 0 {
             logging::error(&format!("拆解字段方案为空 doc={doc_id}"));
+            update_task("failed", 0.0, "字段方案为空", "未生成任何拆解字段", None);
             emit(
                 "digest-failed",
                 json!({ "doc_id": doc_id, "error": { "category": "internal", "code": error_code::DIGEST_FAILED, "message": "字段方案为空", "hint": "请先完成范式识别" } }),
@@ -1004,12 +1181,15 @@ fn start_digest(
 
         // 3.3 逐字段拆解（每字段一次请求，实时进度 + 增量持久化）
         for (i, fld) in plan.fields.iter().enumerate() {
+            let progress = i as f64 / total as f64;
+            let detail = format!("{}/{} · {}", i + 1, total, fld.label);
+            update_task("running", progress, "拆解中", &detail, None);
             emit(
                 "digest-progress",
                 json!({
                     "doc_id": doc_id, "stage": "拆解中",
-                    "progress": i as f64 / total as f64,
-                    "detail": format!("{}/{} · {}", i + 1, total, fld.label)
+                    "progress": progress,
+                    "detail": detail
                 }),
             );
             let user = digest::build_field_user(fld, &context);
@@ -1088,6 +1268,7 @@ fn start_digest(
             "digest-done",
             json!({ "doc_id": doc_id, "version": version, "count": total }),
         );
+        update_task("done", 1.0, "拆解完成", &format!("v{version} · 共 {total} 个字段"), None);
         stats::record(stats::StatsEvent::Digest, t_digest.elapsed().as_millis() as u64);
     });
     Ok(())
@@ -1949,6 +2130,9 @@ pub fn run() {
             set_mineru_key,
             start_parse,
             read_parsed,
+            list_tasks,
+            clear_finished_tasks,
+            delete_task,
             start_translate,
             pause_translate,
             resume_translate,
@@ -1984,7 +2168,11 @@ pub fn run() {
             save_note,
             delete_note,
             export_note,
-            print_note
+            print_note,
+            delete_notes_batch,
+            export_notes_batch,
+            rename_note,
+            replace_in_notes
         ])
         .run(tauri::generate_context!());
 

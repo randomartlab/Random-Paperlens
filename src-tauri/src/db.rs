@@ -98,6 +98,17 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         )?;
     }
 
+    if version < 5 {
+        // 任务中心：补充更新时间、详情字段，并为状态/时间查询建立索引
+        conn.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN updated_at TEXT;
+             ALTER TABLE tasks ADD COLUMN detail TEXT;
+             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+             CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
+             PRAGMA user_version = 5;",
+        )?;
+    }
+
     Ok(())
 }
 
@@ -123,7 +134,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         // 验证表存在
         let tables: Vec<String> = conn

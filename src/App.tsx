@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import ReaderView from "./ReaderView";
 import SettingsView from "./SettingsView";
 import NotesView from "./NotesView";
+import TaskCenterView from "./TaskCenterView";
 import HelpView from "./HelpView";
 
 interface Doc {
@@ -601,18 +602,7 @@ function App() {
         ) : tab === "笔记" ? (
           <NotesView />
         ) : tab === "任务中心" ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="flex max-w-md flex-col items-center text-center">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-dashed border-divider-bold bg-panel text-2xl">
-                🗂️
-              </div>
-              <h2 className="mb-1.5 text-base font-semibold">暂无后台任务</h2>
-              <p className="text-sm leading-relaxed text-primary/55">
-                解析、翻译、拆解任务进行中会实时显示在文献卡片上，
-                任务完成后可前往对应视图查看结果。
-              </p>
-            </div>
-          </div>
+          <TaskCenterView />
         ) : loadingLib && docs.length === 0 ? (
           /* 文献库加载态 */
           <div className="flex h-full items-center justify-center gap-2.5 text-sm text-primary/45">
