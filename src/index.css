@@ -39,6 +39,25 @@
 
   /* 句子联动高亮（原 bg-amber-200/70） */
   --color-mark: rgba(253, 230, 138, 0.7);
+
+  /* 品牌强调（范式/拆解 violet 系） */
+  --color-brand: #7c3aed;
+  --color-brand-strong: #6d28d9;
+  --color-brand-soft: #f5f3ff;
+  --color-brand-hover: #ede9fe;
+  --color-brand-border: #ddd6fe;
+
+  /* 正文排版（.prose 覆盖 typography 插件变量） */
+  --color-prose-body: #374151;
+  --color-prose-heading: #111827;
+  --color-prose-muted: #6b7280;
+  --color-prose-link: #2563eb;
+  --color-prose-code: #1f2937;
+  --color-prose-border: rgba(17, 24, 39, 0.14);
+
+  /* 代码块底色/前景 */
+  --color-hljs-bg: #f6f8fa;
+  --color-hljs-fg: #24292e;
 }
 
 .dark {
@@ -71,6 +90,22 @@
   --color-danger-border: rgba(239, 68, 68, 0.3);
 
   --color-mark: rgba(180, 83, 9, 0.55);
+
+  --color-brand: #a78bfa;
+  --color-brand-strong: #c4b5fd;
+  --color-brand-soft: rgba(139, 92, 246, 0.15);
+  --color-brand-hover: rgba(139, 92, 246, 0.25);
+  --color-brand-border: rgba(139, 92, 246, 0.3);
+
+  --color-prose-body: #cbd5e1;
+  --color-prose-heading: #f1f5f9;
+  --color-prose-muted: #94a3b8;
+  --color-prose-link: #93c5fd;
+  --color-prose-code: #e2e8f0;
+  --color-prose-border: rgba(232, 234, 242, 0.2);
+
+  --color-hljs-bg: #16161f;
+  --color-hljs-fg: #c9d1d9;
 }
 
 /* 将语义 token 映射为 Tailwind 工具类（bg-canvas / text-primary / border-divider 等） */
@@ -100,7 +135,7 @@
   --color-mark: var(--color-mark);
 }
 
-/* 文献阅读台全局样式 */
+/* Rd学术阅读器全局样式 */
 html,
 body,
 #root {
@@ -192,30 +227,30 @@ html.theme-transition *::after {
   animation: spin 0.7s linear infinite;
 }
 
-/* 暗色下 prose 正文适配（覆盖 @tailwindcss/typography 变量） */
-.dark .prose {
-  --tw-prose-body: #cbd5e1;
-  --tw-prose-headings: #f1f5f9;
-  --tw-prose-lead: #94a3b8;
-  --tw-prose-links: #93c5fd;
-  --tw-prose-bold: #f1f5f9;
-  --tw-prose-counters: #94a3b8;
-  --tw-prose-bullets: #94a3b8;
-  --tw-prose-hr: rgba(232, 234, 242, 0.12);
-  --tw-prose-quotes: #cbd5e1;
-  --tw-prose-quote-borders: rgba(232, 234, 242, 0.2);
-  --tw-prose-captions: #94a3b8;
-  --tw-prose-code: #e2e8f0;
-  --tw-prose-pre-code: #e2e8f0;
-  --tw-prose-pre-bg: #16161f;
-  --tw-prose-th-borders: rgba(232, 234, 242, 0.12);
-  --tw-prose-td-borders: rgba(232, 234, 242, 0.1);
+/* 正文 prose 适配（覆盖 @tailwindcss/typography 变量，跟随主题 token） */
+.prose {
+  --tw-prose-body: var(--color-prose-body);
+  --tw-prose-headings: var(--color-prose-heading);
+  --tw-prose-lead: var(--color-prose-muted);
+  --tw-prose-links: var(--color-prose-link);
+  --tw-prose-bold: var(--color-prose-heading);
+  --tw-prose-counters: var(--color-prose-muted);
+  --tw-prose-bullets: var(--color-prose-muted);
+  --tw-prose-hr: var(--color-prose-border);
+  --tw-prose-quotes: var(--color-prose-body);
+  --tw-prose-quote-borders: var(--color-prose-border);
+  --tw-prose-captions: var(--color-prose-muted);
+  --tw-prose-code: var(--color-prose-code);
+  --tw-prose-pre-code: var(--color-prose-code);
+  --tw-prose-pre-bg: var(--color-hljs-bg);
+  --tw-prose-th-borders: var(--color-prose-border);
+  --tw-prose-td-borders: var(--color-prose-border);
 }
 
-/* 暗色下代码高亮（GitHub Dark 配色，覆盖 highlight.js github.css） */
-.dark .hljs {
-  background: #16161f;
-  color: #c9d1d9;
+/* 代码高亮底色/前景跟随主题（token 颜色保留 GitHub 亮/暗两套） */
+.hljs {
+  background: var(--color-hljs-bg);
+  color: var(--color-hljs-fg);
 }
 .dark .hljs-keyword,
 .dark .hljs-selector-tag,
@@ -271,28 +306,18 @@ html.theme-transition *::after {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(11, 19, 38, 0.18);
+  background: var(--color-divider-bold);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(11, 19, 38, 0.3);
+  background: color-mix(in srgb, var(--color-divider-bold) 70%, var(--color-primary));
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
-}
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(232, 234, 242, 0.18);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(232, 234, 242, 0.3);
-  border: 2px solid transparent;
-  background-clip: padding-box;
 }
 
 /* 暗色下阴影加深 */
@@ -309,36 +334,388 @@ html.theme-transition *::after {
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
 }
 
-/* 暗色下 violet 品牌色适配（拆解/范式相关 chip、按钮，亮色保留原 tailwind 色值） */
-.dark .bg-violet-50 {
-  background-color: rgba(139, 92, 246, 0.15);
+/* 品牌强调色（范式/拆解相关 chip、按钮；亮色暗色统一走主题 token） */
+.bg-violet-50 {
+  background-color: var(--color-brand-soft);
 }
-.dark .bg-violet-50\/50 {
-  background-color: rgba(139, 92, 246, 0.08);
+.bg-violet-50\/50 {
+  background-color: color-mix(in srgb, var(--color-brand) 8%, transparent);
 }
-.dark .text-violet-700 {
-  color: #c4b5fd;
+.text-violet-700 {
+  color: var(--color-brand-strong);
 }
-.dark .border-violet-100 {
-  border-color: rgba(139, 92, 246, 0.2);
+.border-violet-100 {
+  border-color: color-mix(in srgb, var(--color-brand) 20%, transparent);
 }
-.dark .border-violet-200 {
-  border-color: rgba(139, 92, 246, 0.3);
+.border-violet-200 {
+  border-color: color-mix(in srgb, var(--color-brand) 30%, transparent);
 }
-.dark .hover\:bg-violet-100:hover {
-  background-color: rgba(139, 92, 246, 0.25);
+.hover\:bg-violet-100:hover {
+  background-color: var(--color-brand-hover);
 }
-.dark .bg-violet-100 {
-  background-color: rgba(139, 92, 246, 0.1);
+.bg-violet-100 {
+  background-color: var(--color-brand-hover);
 }
-.dark .text-violet-500 {
-  color: #a78bfa;
+.text-violet-500 {
+  color: var(--color-brand);
 }
 
-/* 页面内 Markdown 表格（renderMdTable 注入的 border-black/10、bg-black/5）暗色适配 */
-.dark .border-black\/10 {
-  border-color: rgba(232, 234, 242, 0.12);
+/* 页面内 Markdown 表格（renderMdTable 注入的 border-black/10、bg-black/5）主题适配 */
+.border-black\/10 {
+  border-color: var(--color-divider-strong);
 }
-.dark .bg-black\/5 {
-  background-color: rgba(232, 234, 242, 0.08);
+.bg-black\/5 {
+  background-color: var(--color-hover);
+}
+
+/* ===================== Obsidian 主题（M4.4 主题扩展） =====================
+   在默认浅/深两套之外提供 4 套 Obsidian 风格主题：
+   data-theme="minimal"      Minimal（Atom Light/Dark）
+   data-theme="dracula"      Dracula（Day/Night）
+   data-theme="blue-topaz"   Blue Topaz
+   data-theme="catppuccin"   AnuPpuccin（Latte/Mocha）
+   每套都包含浅色 :root[data-theme] 与深色 .dark[data-theme] 两组 token。 */
+
+/* ---- Minimal ---- */
+:root[data-theme="minimal"] {
+  color-scheme: light;
+
+  --color-canvas: #fafafa;
+  --color-panel: #ffffff;
+  --color-surface: #f1f1f2;
+  --color-hover: rgba(35, 35, 36, 0.06);
+  --color-track: rgba(35, 35, 36, 0.06);
+  --color-primary: #232324;
+  --color-primary-inverse: #ffffff;
+  --color-divider: rgba(35, 35, 36, 0.08);
+  --color-divider-strong: rgba(35, 35, 36, 0.14);
+  --color-divider-bold: rgba(35, 35, 36, 0.26);
+
+  --color-info-bg: #eef3fc;
+  --color-info-fg: #1d4ed8;
+  --color-info-border: #c8daf5;
+  --color-success-bg: #ecfdf5;
+  --color-success-fg: #047857;
+  --color-success-border: #a7f3d0;
+  --color-warning-bg: #fffbeb;
+  --color-warning-fg: #b45309;
+  --color-warning-border: #fde68a;
+  --color-danger-bg: #fef2f2;
+  --color-danger-fg: #b91c1c;
+  --color-danger-border: #fecaca;
+  --color-mark: rgba(255, 214, 102, 0.5);
+
+  --color-brand: #3b6eeb;
+  --color-brand-strong: #2f5bd0;
+  --color-brand-soft: #eef3fc;
+  --color-brand-hover: #dfe9fb;
+  --color-brand-border: #bcd0f6;
+  --color-prose-body: #3c3f45;
+  --color-prose-heading: #1a1c22;
+  --color-prose-muted: #8e8e90;
+  --color-prose-link: #3b6eeb;
+  --color-prose-code: #24292f;
+  --color-prose-border: rgba(28, 30, 34, 0.14);
+  --color-hljs-bg: #f3f3f4;
+  --color-hljs-fg: #24292f;
+}
+.dark[data-theme="minimal"] {
+  color-scheme: dark;
+
+  --color-canvas: #282c34;
+  --color-panel: #21252c;
+  --color-surface: #1c2028;
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-track: rgba(255, 255, 255, 0.06);
+  --color-primary: #d8dae1;
+  --color-primary-inverse: #21252c;
+  --color-divider: rgba(216, 218, 225, 0.08);
+  --color-divider-strong: rgba(216, 218, 225, 0.14);
+  --color-divider-bold: rgba(216, 218, 225, 0.26);
+
+  --color-info-bg: rgba(90, 142, 234, 0.16);
+  --color-info-fg: #9dc0f5;
+  --color-info-border: rgba(90, 142, 234, 0.32);
+  --color-success-bg: rgba(38, 175, 124, 0.16);
+  --color-success-fg: #7fd9b5;
+  --color-success-border: rgba(38, 175, 124, 0.32);
+  --color-warning-bg: rgba(229, 192, 123, 0.16);
+  --color-warning-fg: #e8cf9d;
+  --color-warning-border: rgba(229, 192, 123, 0.32);
+  --color-danger-bg: rgba(224, 108, 117, 0.16);
+  --color-danger-fg: #e6a2a8;
+  --color-danger-border: rgba(224, 108, 117, 0.32);
+  --color-mark: rgba(229, 192, 123, 0.35);
+
+  --color-brand: #5a8eea;
+  --color-brand-strong: #9dc0f5;
+  --color-brand-soft: rgba(90, 142, 234, 0.15);
+  --color-brand-hover: rgba(90, 142, 234, 0.24);
+  --color-brand-border: rgba(90, 142, 234, 0.32);
+  --color-prose-body: #c6cbd6;
+  --color-prose-heading: #e8eaf0;
+  --color-prose-muted: #898f9d;
+  --color-prose-link: #9dc0f5;
+  --color-prose-code: #e2e4ea;
+  --color-prose-border: rgba(216, 218, 225, 0.2);
+  --color-hljs-bg: #1c2028;
+  --color-hljs-fg: #d8dae1;
+}
+
+/* ---- Dracula ---- */
+:root[data-theme="dracula"] {
+  color-scheme: light;
+
+  --color-canvas: #f8f8f2;
+  --color-panel: #ffffff;
+  --color-surface: #f0f0ec;
+  --color-hover: rgba(40, 42, 54, 0.06);
+  --color-track: rgba(40, 42, 54, 0.06);
+  --color-primary: #282a36;
+  --color-primary-inverse: #f8f8f2;
+  --color-divider: rgba(40, 42, 54, 0.08);
+  --color-divider-strong: rgba(40, 42, 54, 0.14);
+  --color-divider-bold: rgba(40, 42, 54, 0.26);
+
+  --color-info-bg: #e8f6fd;
+  --color-info-fg: #0a6f99;
+  --color-info-border: #bfe6f5;
+  --color-success-bg: #e9fbf0;
+  --color-success-fg: #1e8e52;
+  --color-success-border: #bfeed2;
+  --color-warning-bg: #fff6e8;
+  --color-warning-fg: #9a6a1f;
+  --color-warning-border: #fde2b8;
+  --color-danger-bg: #ffecec;
+  --color-danger-fg: #c22a4a;
+  --color-danger-border: #fcc9d2;
+  --color-mark: rgba(255, 184, 108, 0.45);
+
+  --color-brand: #7a54d6;
+  --color-brand-strong: #6a46c0;
+  --color-brand-soft: #f1edfb;
+  --color-brand-hover: #e7e0f9;
+  --color-brand-border: #d4c8f3;
+  --color-prose-body: #3f4150;
+  --color-prose-heading: #282a36;
+  --color-prose-muted: #6f7180;
+  --color-prose-link: #7a54d6;
+  --color-prose-code: #282a36;
+  --color-prose-border: rgba(40, 42, 54, 0.14);
+  --color-hljs-bg: #f0f0ec;
+  --color-hljs-fg: #282a36;
+}
+.dark[data-theme="dracula"] {
+  color-scheme: dark;
+
+  --color-canvas: #282a36;
+  --color-panel: #1e2028;
+  --color-surface: #20212c;
+  --color-hover: rgba(248, 248, 242, 0.06);
+  --color-track: rgba(248, 248, 242, 0.06);
+  --color-primary: #f8f8f2;
+  --color-primary-inverse: #282a36;
+  --color-divider: rgba(248, 248, 242, 0.08);
+  --color-divider-strong: rgba(248, 248, 242, 0.14);
+  --color-divider-bold: rgba(248, 248, 242, 0.26);
+
+  --color-info-bg: rgba(139, 233, 253, 0.15);
+  --color-info-fg: #8be9fd;
+  --color-info-border: rgba(139, 233, 253, 0.3);
+  --color-success-bg: rgba(80, 250, 123, 0.15);
+  --color-success-fg: #50fa7b;
+  --color-success-border: rgba(80, 250, 123, 0.3);
+  --color-warning-bg: rgba(255, 184, 108, 0.15);
+  --color-warning-fg: #ffb86c;
+  --color-warning-border: rgba(255, 184, 108, 0.3);
+  --color-danger-bg: rgba(255, 85, 85, 0.15);
+  --color-danger-fg: #ff5555;
+  --color-danger-border: rgba(255, 85, 85, 0.3);
+  --color-mark: rgba(255, 184, 108, 0.32);
+
+  --color-brand: #bd93f9;
+  --color-brand-strong: #d0b6fb;
+  --color-brand-soft: rgba(189, 147, 249, 0.15);
+  --color-brand-hover: rgba(189, 147, 249, 0.24);
+  --color-brand-border: rgba(189, 147, 249, 0.32);
+  --color-prose-body: #d8dae4;
+  --color-prose-heading: #f8f8f2;
+  --color-prose-muted: #9ba0ae;
+  --color-prose-link: #8be9fd;
+  --color-prose-code: #f8f8f2;
+  --color-prose-border: rgba(248, 248, 242, 0.2);
+  --color-hljs-bg: #21222c;
+  --color-hljs-fg: #f8f8f2;
+}
+
+/* ---- Blue Topaz ---- */
+:root[data-theme="blue-topaz"] {
+  color-scheme: light;
+
+  --color-canvas: #ffffff;
+  --color-panel: #fcfcfc;
+  --color-surface: #f4f7fb;
+  --color-hover: rgba(45, 130, 204, 0.07);
+  --color-track: rgba(14, 14, 14, 0.05);
+  --color-primary: #0e0e0e;
+  --color-primary-inverse: #ffffff;
+  --color-divider: rgba(14, 14, 14, 0.07);
+  --color-divider-strong: rgba(14, 14, 14, 0.13);
+  --color-divider-bold: rgba(14, 14, 14, 0.24);
+
+  --color-info-bg: #eef6fd;
+  --color-info-fg: #1d6fb8;
+  --color-info-border: #c9e2f6;
+  --color-success-bg: #ecfdf5;
+  --color-success-fg: #047857;
+  --color-success-border: #a7f3d0;
+  --color-warning-bg: #fffbeb;
+  --color-warning-fg: #b45309;
+  --color-warning-border: #fde68a;
+  --color-danger-bg: #fef2f2;
+  --color-danger-fg: #b91c1c;
+  --color-danger-border: #fecaca;
+  --color-mark: rgba(255, 216, 116, 0.5);
+
+  --color-brand: #2d82cc;
+  --color-brand-strong: #25689f;
+  --color-brand-soft: #eef6fd;
+  --color-brand-hover: #dfedf9;
+  --color-brand-border: #c0dcf3;
+  --color-prose-body: #3d4048;
+  --color-prose-heading: #111214;
+  --color-prose-muted: #7f7f7f;
+  --color-prose-link: #2d82cc;
+  --color-prose-code: #1f2430;
+  --color-prose-border: rgba(14, 14, 14, 0.13);
+  --color-hljs-bg: #f6f8fb;
+  --color-hljs-fg: #24292f;
+}
+.dark[data-theme="blue-topaz"] {
+  color-scheme: dark;
+
+  --color-canvas: #202020;
+  --color-panel: #26262c;
+  --color-surface: #18181d;
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-track: rgba(255, 255, 255, 0.06);
+  --color-primary: #c6c6c6;
+  --color-primary-inverse: #202020;
+  --color-divider: rgba(198, 198, 198, 0.08);
+  --color-divider-strong: rgba(198, 198, 198, 0.14);
+  --color-divider-bold: rgba(198, 198, 198, 0.26);
+
+  --color-info-bg: rgba(45, 130, 204, 0.18);
+  --color-info-fg: #7fb6e2;
+  --color-info-border: rgba(45, 130, 204, 0.35);
+  --color-success-bg: rgba(52, 199, 123, 0.16);
+  --color-success-fg: #7adcb0;
+  --color-success-border: rgba(52, 199, 123, 0.32);
+  --color-warning-bg: rgba(230, 162, 60, 0.16);
+  --color-warning-fg: #e8bc74;
+  --color-warning-border: rgba(230, 162, 60, 0.32);
+  --color-danger-bg: rgba(231, 76, 60, 0.16);
+  --color-danger-fg: #ec9084;
+  --color-danger-border: rgba(231, 76, 60, 0.32);
+  --color-mark: rgba(255, 200, 120, 0.32);
+
+  --color-brand: #4a9ade;
+  --color-brand-strong: #8cc0ea;
+  --color-brand-soft: rgba(45, 130, 204, 0.16);
+  --color-brand-hover: rgba(45, 130, 204, 0.26);
+  --color-brand-border: rgba(45, 130, 204, 0.34);
+  --color-prose-body: #c6c6c6;
+  --color-prose-heading: #e6e6e6;
+  --color-prose-muted: #8a8a8a;
+  --color-prose-link: #7fb6e2;
+  --color-prose-code: #e2e2e2;
+  --color-prose-border: rgba(198, 198, 198, 0.2);
+  --color-hljs-bg: #282c34;
+  --color-hljs-fg: #c6c6c6;
+}
+
+/* ---- Catppuccin（AnuPpuccin） ---- */
+:root[data-theme="catppuccin"] {
+  color-scheme: light;
+
+  --color-canvas: #eff1f5;
+  --color-panel: #ffffff;
+  --color-surface: #e6e9ef;
+  --color-hover: rgba(76, 79, 105, 0.06);
+  --color-track: rgba(76, 79, 105, 0.06);
+  --color-primary: #4c4f69;
+  --color-primary-inverse: #eff1f5;
+  --color-divider: rgba(76, 79, 105, 0.09);
+  --color-divider-strong: rgba(76, 79, 105, 0.15);
+  --color-divider-bold: rgba(76, 79, 105, 0.28);
+
+  --color-info-bg: #e6effd;
+  --color-info-fg: #1e66f5;
+  --color-info-border: #c6d9fb;
+  --color-success-bg: #eaf6e4;
+  --color-success-fg: #40a02b;
+  --color-success-border: #c8e8ba;
+  --color-warning-bg: #fdf3e3;
+  --color-warning-fg: #b16e1a;
+  --color-warning-border: #f7ddb8;
+  --color-danger-bg: #fde7e9;
+  --color-danger-fg: #b4243a;
+  --color-danger-border: #f7c4ca;
+  --color-mark: rgba(238, 212, 159, 0.65);
+
+  --color-brand: #8839ef;
+  --color-brand-strong: #6c27d6;
+  --color-brand-soft: #f1ecfd;
+  --color-brand-hover: #e8dffb;
+  --color-brand-border: #d6c7f7;
+  --color-prose-body: #4c4f69;
+  --color-prose-heading: #383a4a;
+  --color-prose-muted: #6c7089;
+  --color-prose-link: #1e66f5;
+  --color-prose-code: #4c4f69;
+  --color-prose-border: rgba(76, 79, 105, 0.15);
+  --color-hljs-bg: #e6e9ef;
+  --color-hljs-fg: #4c4f69;
+}
+.dark[data-theme="catppuccin"] {
+  color-scheme: dark;
+
+  --color-canvas: #1e1e2e;
+  --color-panel: #181825;
+  --color-surface: #11111b;
+  --color-hover: rgba(198, 208, 245, 0.07);
+  --color-track: rgba(198, 208, 245, 0.07);
+  --color-primary: #c6d0f5;
+  --color-primary-inverse: #1e1e2e;
+  --color-divider: rgba(198, 208, 245, 0.08);
+  --color-divider-strong: rgba(198, 208, 245, 0.15);
+  --color-divider-bold: rgba(198, 208, 245, 0.27);
+
+  --color-info-bg: rgba(137, 180, 250, 0.16);
+  --color-info-fg: #89b4fa;
+  --color-info-border: rgba(137, 180, 250, 0.32);
+  --color-success-bg: rgba(166, 227, 161, 0.15);
+  --color-success-fg: #a6e3a1;
+  --color-success-border: rgba(166, 227, 161, 0.3);
+  --color-warning-bg: rgba(249, 226, 175, 0.15);
+  --color-warning-fg: #f9e2af;
+  --color-warning-border: rgba(249, 226, 175, 0.3);
+  --color-danger-bg: rgba(243, 139, 168, 0.15);
+  --color-danger-fg: #f38ba8;
+  --color-danger-border: rgba(243, 139, 168, 0.3);
+  --color-mark: rgba(249, 226, 175, 0.35);
+
+  --color-brand: #c6a0f6;
+  --color-brand-strong: #d6bdf8;
+  --color-brand-soft: rgba(198, 160, 246, 0.15);
+  --color-brand-hover: rgba(198, 160, 246, 0.24);
+  --color-brand-border: rgba(198, 160, 246, 0.32);
+  --color-prose-body: #c6d0f5;
+  --color-prose-heading: #e3e8fb;
+  --color-prose-muted: #a1a8c9;
+  --color-prose-link: #89b4fa;
+  --color-prose-code: #e3e8fb;
+  --color-prose-border: rgba(198, 208, 245, 0.2);
+  --color-hljs-bg: #181825;
+  --color-hljs-fg: #c6d0f5;
 }

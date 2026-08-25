@@ -26,3 +26,9 @@ litdesk-sample.pdf
 # 回归样本 PDF（大文件，由 scripts/fetch_regression_samples.sh 按需拉取）
 samples/
 target/
+
+# 本地打包产物（由 GitHub Actions / 手动构建生成）
+release/
+
+# 其他包管理器锁文件（项目使用 npm）
+bun.lock

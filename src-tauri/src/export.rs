@@ -36,7 +36,7 @@ pub fn compose_markdown(parts: &ExportParts) -> String {
 /// 拼装自包含 HTML（内嵌图片 + 主题）
 pub fn compose_html(parts: &ExportParts, base_dir: &Path, theme: &str) -> String {
     let body = format!(
-        "<h1>{}</h1>\n<p class=\"meta\">由文献阅读台导出</p>\n{}\n<hr/>\n{}\n<hr/>\n{}\n",
+        "<h1>{}</h1>\n<p class=\"meta\">由 Rd学术阅读器导出</p>\n{}\n<hr/>\n{}\n<hr/>\n{}\n",
         escape_html(&parts.title),
         section_html("原文", &parts.original, base_dir),
         parts

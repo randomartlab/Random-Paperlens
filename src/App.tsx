@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import ReaderView from "./ReaderView";
 import SettingsView from "./SettingsView";
 import NotesView from "./NotesView";
+import HelpView from "./HelpView";
 
 interface Doc {
   id: string;
@@ -20,6 +21,16 @@ interface Doc {
   read_status: string;
   created_at: string;
 }
+
+export type ThemePreset = "default" | "minimal" | "dracula" | "blue-topaz" | "catppuccin";
+
+const THEME_PRESETS: { id: ThemePreset; name: string }[] = [
+  { id: "default", name: "默认" },
+  { id: "minimal", name: "Minimal" },
+  { id: "dracula", name: "Dracula" },
+  { id: "blue-topaz", name: "Blue Topaz" },
+  { id: "catppuccin", name: "Catppuccin" },
+];
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "待解析",
@@ -163,6 +174,7 @@ function App() {
         initialMode?: "original" | "translated" | "bilingual" | "digest";
       }
   >({ type: "list" });
+  const [showHelp, setShowHelp] = useState(false);
   const [recog, setRecog] = useState<{ doc: Doc; result: ParadigmResult } | null>(null);
   const [recognizing, setRecognizing] = useState<string | null>(null);
   const [digesting, setDigesting] = useState<string | null>(null);
@@ -178,6 +190,10 @@ function App() {
     const saved = localStorage.getItem("theme");
     if (saved === "light" || saved === "dark") return saved;
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+  const [themePreset, setThemePreset] = useState<ThemePreset>(() => {
+    const saved = localStorage.getItem("theme-preset");
+    return THEME_PRESETS.some((p) => p.id === saved) ? (saved as ThemePreset) : "default";
   });
 
   const openReader = (doc: Doc) => {
@@ -332,19 +348,21 @@ function App() {
       .catch(() => setHasApi(true));
   }, []);
 
-  // M4.4 主题切换：挂载 .dark、短暂过渡动画、写入 localStorage
+  // M4.4 主题切换：挂载 .dark / data-theme、短暂过渡动画、写入 localStorage
   useEffect(() => {
     const root = document.documentElement;
     root.classList.add("theme-transition");
     root.classList.toggle("dark", theme === "dark");
+    root.dataset.theme = themePreset;
     try {
       localStorage.setItem("theme", theme);
+      localStorage.setItem("theme-preset", themePreset);
     } catch {
       // localStorage 不可用时静默降级（如无痕模式）
     }
     const timer = window.setTimeout(() => root.classList.remove("theme-transition"), 200);
     return () => window.clearTimeout(timer);
-  }, [theme]);
+  }, [theme, themePreset]);
 
   useEffect(() => {
     refresh();
@@ -494,17 +512,29 @@ function App() {
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider bg-panel px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-inverse">
-            文
+            Rd
           </div>
           <h1 className="text-[15px] font-semibold tracking-tight">
-            文献阅读台
+            Rd学术阅读器
           </h1>
           <span className="rounded-full bg-primary/5 px-2.5 py-0.5 text-xs text-primary/60">
-            v0.1.0
+            v0.2.0
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-primary/50">
           <span className="hidden sm:inline">本地优先 · 学术文献加工流水线</span>
+          <button
+            onClick={() => setShowHelp(true)}
+            title="使用帮助"
+            aria-label="使用帮助"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-divider-strong bg-panel/70 text-primary/60 transition-colors hover:bg-hover"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <path d="M12 17h.01" />
+            </svg>
+          </button>
           <button
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
             title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
@@ -567,7 +597,7 @@ function App() {
       <main className="flex-1 overflow-y-auto p-6">
         <div key={tab} className="anim-fade-in h-full">
         {tab === "设置" ? (
-          <SettingsView />
+          <SettingsView themePreset={themePreset} onThemePreset={setThemePreset} />
         ) : tab === "笔记" ? (
           <NotesView />
         ) : tab === "任务中心" ? (
@@ -1165,6 +1195,9 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 使用帮助弹窗 */}
+      {showHelp && <HelpView onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

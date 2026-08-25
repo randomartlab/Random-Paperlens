@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import type { ThemePreset } from "./App";
 
 interface ApiConfig {
   id: string;
@@ -74,12 +75,23 @@ const FREE_TEMPLATES = {
   },
 } as const;
 
-function SettingsView() {
+const THEME_OPTIONS: { id: ThemePreset; name: string; desc: string; swatches: string[] }[] = [
+  { id: "default", name: "默认", desc: "Rd 原生配色", swatches: ["#0f172a", "#7c3aed", "#2563eb"] },
+  { id: "minimal", name: "Minimal", desc: "中灰 + 蓝，清爽克制", swatches: ["#232324", "#3b6eeb", "#fafafa"] },
+  { id: "dracula", name: "Dracula", desc: "紫调高对比", swatches: ["#282a36", "#bd93f9", "#8be9fd"] },
+  { id: "blue-topaz", name: "Blue Topaz", desc: "蓝宝石智识感", swatches: ["#202020", "#4a9ade", "#ffffff"] },
+  { id: "catppuccin", name: "Catppuccin", desc: "莫兰迪紫，低饱和", swatches: ["#1e1e2e", "#c6a0f6", "#89b4fa"] },
+];
+
+function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset; onThemePreset: (preset: ThemePreset) => void }) {
   const [configs, setConfigs] = useState<ApiConfig[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [testing, setTesting] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  // MinerU Token（用户自填，settings 表持久化）
+  const [mineruKey, setMineruKey] = useState("");
+  const [mineruConfigured, setMineruConfigured] = useState(false);
 
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
   const [termInput, setTermInput] = useState("");
@@ -106,6 +118,24 @@ function SettingsView() {
   useEffect(() => {
     refresh().catch((e) => setNotice(String(e)));
   }, [refresh]);
+
+  // 加载 MinerU Token 配置状态
+  useEffect(() => {
+    invoke<{ configured: boolean }>("get_mineru_key")
+      .then((r) => setMineruConfigured(r.configured))
+      .catch(() => {});
+  }, []);
+
+  const saveMineruKey = async () => {
+    try {
+      await invoke("set_mineru_key", { key: mineruKey });
+      setMineruConfigured(mineruKey.trim() !== "");
+      setNotice(mineruKey.trim() ? "MinerU Token 已保存" : "已清除 MinerU Token 配置");
+      setMineruKey("");
+    } catch (e) {
+      setNotice(String(e));
+    }
+  };
 
   const saveConfig = async () => {
     try {
@@ -278,6 +308,51 @@ function SettingsView() {
         </div>
       )}
 
+      {/* ============ 主题外观 ============ */}
+      <section className="mb-8">
+        <div className="mb-3">
+          <h2 className="text-[15px] font-semibold">主题外观</h2>
+          <p className="mt-0.5 text-xs text-primary/50">
+            灵感来自 Obsidian 社区皮肤，每套主题均可配合顶栏的深浅色切换使用，选择会自动保存。
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {THEME_OPTIONS.map((t) => {
+            const active = themePreset === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onThemePreset(t.id)}
+                className={`rounded-xl border p-4 text-left transition-colors ${
+                  active
+                    ? "border-primary bg-primary/5"
+                    : "border-divider bg-panel hover:bg-hover"
+                }`}
+              >
+                <div className="flex h-12 items-end gap-1.5 rounded-lg border border-divider bg-canvas p-1.5">
+                  {t.swatches.map((c) => (
+                    <span
+                      key={c}
+                      className="h-6 flex-1 rounded-sm"
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+                <div className="mt-2.5 flex items-center justify-between">
+                  <span className="text-sm font-medium">{t.name}</span>
+                  {active && (
+                    <span className="text-[11px] font-medium text-primary">使用中</span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-primary/50">{t.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       {/* ============ 免费方案（F9） ============ */}
       <section className="mb-8">
         <div className="mb-3">
@@ -331,7 +406,7 @@ function SettingsView() {
           <div className="rounded-xl border border-divider bg-panel p-4">
             <div className="text-sm font-medium">解析（MinerU）</div>
             <div className="mt-1 min-h-8 text-xs leading-relaxed text-primary/55">
-              官方 API 注册即享每日 2000 页免费额度；Token 写入项目 .env
+              官方 API 注册即享每日 2000 页免费额度；Token 在下方「解析（MinerU）配置」自行填入
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
@@ -348,6 +423,49 @@ function SettingsView() {
               </button>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ============ MinerU 解析配置 ============ */}
+      <section className="mb-8">
+        <div className="mb-3">
+          <h2 className="text-[15px] font-semibold">解析（MinerU）配置</h2>
+          <p className="mt-0.5 text-xs text-primary/50">
+            MinerU 精准解析使用<b>你自己的 Token</b>：到 mineru.net 免费注册，控制台「API」页获取。
+            官方每日 2000 页免费额度。
+          </p>
+        </div>
+        <div className="max-w-md rounded-xl border border-divider bg-panel p-4">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-xs text-primary/55">Token</span>
+            {mineruConfigured ? (
+              <span className="rounded-full bg-success-bg px-2 py-0.5 text-[11px] text-success-fg">
+                已配置
+              </span>
+            ) : (
+              <span className="rounded-full bg-warning-bg px-2 py-0.5 text-[11px] text-warning-fg">
+                未配置
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              className={inputCls}
+              value={mineruKey}
+              onChange={(e) => setMineruKey(e.target.value)}
+              placeholder="粘贴你的 MinerU Token"
+            />
+            <button
+              onClick={saveMineruKey}
+              className="shrink-0 rounded-md bg-primary/90 px-3 py-2 text-xs font-medium text-primary-inverse hover:bg-primary"
+            >
+              保存
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-primary/40">
+            留空保存可清除配置（回退到 .env / 环境变量）
+          </p>
         </div>
       </section>
 

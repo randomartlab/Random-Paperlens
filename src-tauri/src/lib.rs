@@ -36,15 +36,21 @@ struct AppState {
     translation_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
-/// 从候选路径或环境变量加载 MINERU_API_KEY（.env 支持：KEY=VALUE 行）
-fn load_mineru_key(app: &tauri::AppHandle) -> Option<String> {
-    // 1. 环境变量优先
+/// 加载 MINERU_API_KEY：优先用户在设置页填写的 Key（settings 表），
+/// 回退到环境变量 / .env（KEY=VALUE 行）
+fn load_mineru_key(conn: &Connection, app: &tauri::AppHandle) -> Option<String> {
+    // 1. 用户自填 Key（settings 表 mineru_api_key）优先
+    let user_key = read_setting(conn, "mineru_api_key");
+    if !user_key.is_empty() {
+        return Some(user_key);
+    }
+    // 2. 环境变量
     if let Ok(k) = std::env::var("MINERU_API_KEY") {
         if !k.is_empty() {
             return Some(k);
         }
     }
-    // 2. 候选 .env 路径：应用配置目录 / 当前目录（src-tauri）/ 项目根（父目录）
+    // 3. 候选 .env 路径：应用配置目录 / 当前目录（src-tauri）/ 项目根（父目录）
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(dir) = app.path().app_config_dir() {
         candidates.push(dir.join(".env"));
@@ -67,6 +73,23 @@ fn load_mineru_key(app: &tauri::AppHandle) -> Option<String> {
         }
     }
     None
+}
+
+/// 查询 MinerU Token 是否已由用户配置（不回传 Key 本身）
+#[tauri::command]
+fn get_mineru_key(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "configured": !read_setting(&conn, "mineru_api_key").is_empty() }))
+}
+
+/// 保存用户自填的 MinerU Token（空串 = 清除，回退 .env / 环境变量）
+#[tauri::command]
+fn set_mineru_key(key: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let key = key.trim().to_string();
+    write_setting(&conn, "mineru_api_key", &key)?;
+    logging::info("MinerU Token 已更新（用户设置页）");
+    Ok(())
 }
 
 /// 文献条目（与前端共享的结构）
@@ -1890,7 +1913,7 @@ pub fn run() {
             if let Ok(dir) = app.path().app_log_dir() {
                 logging::init_logger(&dir);
             }
-            // 初始化数据库：~/Library/Application Support/文献阅读台/library.db
+            // 初始化数据库：~/Library/Application Support/Rd学术阅读器/library.db
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -1910,7 +1933,7 @@ pub fn run() {
             let conn = db::init_db(&db_path).expect("failed to init database");
             // 从持久化设置初始化本地统计开关（M5.1，默认关闭）
             stats::set_enabled(read_setting(&conn, "stats_enabled") == "1");
-            let mineru = load_mineru_key(app.handle()).map(MinerUClient::new);
+            let mineru = load_mineru_key(&conn, app.handle()).map(MinerUClient::new);
             app.manage(AppState {
                 conn: Mutex::new(conn),
                 mineru,
@@ -1922,6 +1945,8 @@ pub fn run() {
             list_documents,
             import_document,
             set_read_status,
+            get_mineru_key,
+            set_mineru_key,
             start_parse,
             read_parsed,
             start_translate,
