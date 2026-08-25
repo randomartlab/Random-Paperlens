@@ -519,7 +519,7 @@ function App() {
             Rd学术阅读器
           </h1>
           <span className="rounded-full bg-primary/5 px-2.5 py-0.5 text-xs text-primary/60">
-            v0.2.0
+            v0.3.0
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-primary/50">
@@ -558,7 +558,7 @@ function App() {
 
       {/* 主导航 */}
       <nav className="flex h-11 shrink-0 items-center gap-1 border-b border-divider bg-panel px-4 text-sm">
-        {(["文献库", "任务中心", "设置"] as const).map((item) => (
+        {(["文献库", "任务中心", "笔记", "设置"] as const).map((item) => (
           <button
             key={item}
             onClick={() => setTab(item)}

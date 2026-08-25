@@ -135,7 +135,44 @@ pub fn build_field_user(field: &FieldDef, context: &str) -> String {
     )
 }
 
-/// 解析模型输出为 {zh, en, table}；JSON 解析失败时兜底整段作为 zh
+/// 将 JSON 值转为展示文本：字符串直接取；数组逐项拼接；对象取常用文本字段
+fn json_value_text(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(items) => {
+            let lines: Vec<String> = items
+                .iter()
+                .filter_map(|it| match it {
+                    serde_json::Value::String(s) => {
+                        let t = s.trim();
+                        if t.is_empty() { None } else { Some(t.to_string()) }
+                    }
+                    serde_json::Value::Object(o) => {
+                        let picked = ["term", "text", "item", "label", "definition", "zh"]
+                            .iter()
+                            .find_map(|k| o.get(*k).and_then(|x| x.as_str()))
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        Some(picked.unwrap_or_else(|| it.to_string()))
+                    }
+                    other => {
+                        let s = other.to_string();
+                        if s.is_empty() { None } else { Some(s) }
+                    }
+                })
+                .collect();
+            if lines.is_empty() { None } else { Some(lines.join("\n")) }
+        }
+        serde_json::Value::Object(o) => ["zh", "text", "content", "term", "definition"]
+            .iter()
+            .find_map(|k| o.get(*k).and_then(|x| x.as_str()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        _ => None,
+    }
+}
+
+/// 解析模型输出为 {zh, en, table}；zh/en/table 兼容字符串与数组；JSON 解析失败时兜底整段作为 zh
 fn parse_digest_response(raw: &str, ftype: &str) -> (String, String, Option<String>) {
     let cleaned = raw
         .trim()
@@ -144,10 +181,10 @@ fn parse_digest_response(raw: &str, ftype: &str) -> (String, String, Option<Stri
         .trim_end_matches("```")
         .trim();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(cleaned) {
-        let zh = v["zh"].as_str().unwrap_or("").to_string();
-        let en = v["en"].as_str().unwrap_or("").to_string();
+        let zh = json_value_text(&v["zh"]).unwrap_or_default();
+        let en = json_value_text(&v["en"]).unwrap_or_default();
         let table = if ftype == "table" {
-            v["table"].as_str().map(|s| s.to_string())
+            json_value_text(&v["table"])
         } else {
             None
         };

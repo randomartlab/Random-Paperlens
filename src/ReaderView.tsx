@@ -16,6 +16,7 @@ interface Props {
   title: string;
   onBack: () => void;
   initialMode?: Mode;
+  onOpenNotes?: () => void;
 }
 
 type Mode = "original" | "translated" | "bilingual" | "digest";
@@ -34,6 +35,59 @@ interface DigestField {
 interface DigestRecord {
   version: number;
   fields: DigestField[];
+}
+
+/** 从字符串中尽力提取 JSON 承载的文本（对象取 zh/text/…，数组逐项拼接） */
+function extractJsonText(raw: string): string {
+  const t = raw.trim();
+  if (!t.startsWith("{") && !t.startsWith("[")) return raw;
+  let v: unknown;
+  try {
+    v = JSON.parse(t);
+  } catch {
+    return raw;
+  }
+  const pick = (x: unknown): string | null => {
+    if (typeof x === "string") {
+      const s = x.trim();
+      return s || null;
+    }
+    if (Array.isArray(x)) {
+      const lines = x
+        .map((it) => {
+          if (typeof it === "string") return it.trim();
+          if (it && typeof it === "object") {
+            const o = it as Record<string, unknown>;
+            const k = ["term", "text", "item", "label", "definition", "zh"].find(
+              (kk) => typeof o[kk] === "string",
+            );
+            return k ? String(o[k]).trim() : JSON.stringify(it);
+          }
+          return "";
+        })
+        .filter((s) => s.length > 0);
+      return lines.length ? lines.join("\n") : null;
+    }
+    return null;
+  };
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    for (const k of ["zh", "en", "text", "content", "term", "definition", "list"]) {
+      const p = pick(o[k]);
+      if (p) return p;
+    }
+  }
+  const arr = pick(v);
+  return arr || raw;
+}
+
+/** 对历史脏数据（LLM 曾返回 JSON 原文被整体存库）做兜底清洗 */
+function cleanDigestRecord(r: DigestRecord | null): DigestRecord | null {
+  if (!r) return r;
+  return {
+    ...r,
+    fields: r.fields.map((f) => ({ ...f, zh: extractJsonText(f.zh), en: extractJsonText(f.en) })),
+  };
 }
 
 /** 将 Markdown 表格转为 HTML（拆解视图的 table 字段用） */
@@ -399,7 +453,7 @@ function SentencePair({
 const SentencePairMemo = memo(SentencePair);
 
 /** 阅读视图：原文 / 译文 / 双语对照 / 拆解（双语） */
-function ReaderView({ docId, title, onBack, initialMode }: Props) {
+function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   const [mode, setMode] = useState<Mode>(initialMode ?? "original");
   const [content, setContent] = useState("");
   const [baseDir, setBaseDir] = useState("");
@@ -493,7 +547,7 @@ function ReaderView({ docId, title, onBack, initialMode }: Props) {
     invoke<DigestRecord | null>("read_digest", { docId })
       .then((r) => {
         if (cancelled) return;
-        setDigest(r);
+        setDigest(cleanDigestRecord(r));
         setDigestLoading(false);
       })
       .catch((e) => {
@@ -561,7 +615,7 @@ function ReaderView({ docId, title, onBack, initialMode }: Props) {
     setSavingDigest(true);
     try {
       const r = await invoke<DigestRecord>("rollback_digest", { docId, version });
-      setDigest(r);
+      setDigest(cleanDigestRecord(r));
       setEditing(false);
       setEditFields(null);
       const versions = await invoke<{ version: number; created_at: string }[]>(
@@ -825,6 +879,16 @@ function ReaderView({ docId, title, onBack, initialMode }: Props) {
             </button>
           ))}
         </div>
+        {onOpenNotes && (
+          <button
+            onClick={onOpenNotes}
+            title="打开笔记"
+            aria-label="打开笔记"
+            className="shrink-0 rounded-md border border-divider-strong px-2.5 py-1 text-xs font-medium text-primary/70 transition-colors hover:bg-hover"
+          >
+            笔记
+          </button>
+        )}
       </header>
 
       <main className="flex flex-1 overflow-hidden">
