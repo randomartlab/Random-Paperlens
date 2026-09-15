@@ -102,17 +102,20 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
 
   const [stats, setStats] = useState<StatsSnapshot>({ enabled: false, events: [] });
 
-  const [diag, setDiag] = useState<{ log_path: string | null; last_crash: boolean }>({
+  const [diag, setDiag] = useState<Diagnostics>({
     log_path: null,
     last_crash: false,
   });
+  const [mineruTesting, setMineruTesting] = useState<string | null>(null);
+  /** 剪贴板不可用时的诊断文本降级展示（Windows WebView2 可能拒绝 clipboard API） */
+  const [diagFallback, setDiagFallback] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setConfigs(await invoke<ApiConfig[]>("list_api_configs"));
     setGlossary(await invoke<GlossaryEntry[]>("list_glossary"));
     setVision(await invoke<{ base_url: string; api_key: string; model: string }>("get_vision_config"));
     setStats(await invoke<StatsSnapshot>("get_stats"));
-    setDiag(await invoke<{ log_path: string | null; last_crash: boolean }>("get_diagnostics"));
+    setDiag(await invoke<Diagnostics>("get_diagnostics"));
   }, []);
 
   useEffect(() => {
@@ -130,10 +133,55 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
     try {
       await invoke("set_mineru_key", { key: mineruKey });
       setMineruConfigured(mineruKey.trim() !== "");
-      setNotice(mineruKey.trim() ? "MinerU Token 已保存" : "已清除 MinerU Token 配置");
+      setNotice(
+        mineruKey.trim()
+          ? "MinerU Token 已保存，当前会话即可用于解析"
+          : "已清除 MinerU Token 配置",
+      );
       setMineruKey("");
+      // 保存后后端已重建客户端，刷新诊断以反映「当前生效」状态
+      setDiag(await invoke<Diagnostics>("get_diagnostics"));
     } catch (e) {
       setNotice(String(e));
+    }
+  };
+
+  /** 测试 MinerU 连接：只申请上传链接、不上传文件，不消耗解析页数 */
+  const testMineru = async () => {
+    setMineruTesting("测试中…");
+    try {
+      setMineruTesting(await invoke<string>("test_mineru_connection"));
+    } catch (e) {
+      setMineruTesting(String(e));
+    }
+  };
+
+  /** 汇总诊断信息到剪贴板：一次性回传环境、配置状态与最近日志 */
+  const copyDiagnostics = async () => {
+    const text = [
+      `平台: ${diag.platform ?? "-"} / ${diag.arch ?? "-"}`,
+      `应用版本: ${diag.version ?? "-"}`,
+      `数据目录: ${diag.data_dir ?? "-"}`,
+      `日志文件: ${diag.log_path ?? "-"}`,
+      `上次异常退出: ${diag.last_crash ? "是" : "否"}`,
+      `MinerU Token: ${diag.mineru_configured ? "已配置" : "未配置"}（当前生效: ${
+        diag.mineru_active ? "是" : "否"
+      }）`,
+      `翻译模型: ${diag.default_api_model ?? "未配置"}`,
+      `视觉模型: ${diag.vision_configured ? "已配置" : "未配置"}`,
+      `文献数: ${diag.document_count ?? 0} ｜ 失败任务: ${diag.failed_task_count ?? 0}`,
+      "",
+      "---- 最近日志 ----",
+      diag.log_tail ?? "(空)",
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setDiagFallback(null);
+      setNotice("诊断信息已复制到剪贴板，可直接粘贴回传");
+    } catch {
+      // Windows WebView2 下剪贴板 API 可能被拒绝，退回可手动全选的文本框
+      setDiagFallback(text);
+      setNotice("剪贴板不可用，请在下方文本框中全选复制");
     }
   };
 
@@ -462,9 +510,19 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
             >
               保存
             </button>
+            <button
+              onClick={testMineru}
+              disabled={mineruTesting === "测试中…"}
+              className="shrink-0 rounded-md border border-divider-strong px-3 py-2 text-xs text-primary/70 transition-colors hover:bg-hover"
+            >
+              测试连接
+            </button>
           </div>
+          {mineruTesting && (
+            <p className="mt-2 text-[11px] text-primary/60">{mineruTesting}</p>
+          )}
           <p className="mt-2 text-[11px] text-primary/40">
-            留空保存可清除配置（回退到 .env / 环境变量）
+            保存后当前会话即可生效，无需重启应用；留空保存可清除配置（回退到 .env / 环境变量）
           </p>
         </div>
       </section>
@@ -914,7 +972,7 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
         <div className="mb-3">
           <h2 className="text-[15px] font-semibold">诊断信息</h2>
           <p className="mt-0.5 text-xs text-primary/50">
-            应用日志与崩溃恢复状态。遇到问题时可在此查看日志文件（错误信息含 [E-xxxx] 错误码）。
+            遇到问题时点「复制诊断信息」，可把环境、配置状态与最近日志一次性回传（错误信息含 [E-xxxx] 错误码）。
           </p>
         </div>
         <div className="rounded-xl border border-divider bg-panel p-5 shadow-sm">
@@ -923,6 +981,32 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
               检测到上次应用异常退出，未完成的任务已中断，可重新执行。
             </div>
           )}
+
+          <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs sm:grid-cols-3">
+            <DiagItem label="平台 / 架构" value={`${diag.platform ?? "-"} / ${diag.arch ?? "-"}`} />
+            <DiagItem label="应用版本" value={diag.version ?? "-"} />
+            <DiagItem
+              label="文献数 / 失败任务"
+              value={`${diag.document_count ?? 0} / ${diag.failed_task_count ?? 0}`}
+              warn={(diag.failed_task_count ?? 0) > 0}
+            />
+            <DiagItem
+              label="MinerU Token"
+              value={
+                diag.mineru_configured
+                  ? `已配置（生效: ${diag.mineru_active ? "是" : "否"}）`
+                  : "未配置"
+              }
+              warn={!diag.mineru_active}
+            />
+            <DiagItem
+              label="翻译 / 拆解模型"
+              value={diag.default_api_model ?? "未配置"}
+              warn={!diag.default_api_model}
+            />
+            <DiagItem label="视觉模型" value={diag.vision_configured ? "已配置" : "未配置"} />
+          </div>
+
           <div className="flex items-center gap-3">
             <span className="text-xs text-primary/55">日志文件：</span>
             <code className="min-w-0 flex-1 truncate rounded bg-hover px-2 py-1 text-xs text-primary/80">
@@ -939,9 +1023,58 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
             >
               打开日志目录
             </button>
+            <button
+              onClick={copyDiagnostics}
+              className="shrink-0 rounded-md border border-divider-strong px-2.5 py-1 text-xs text-primary/70 transition-colors hover:bg-hover"
+            >
+              复制诊断信息
+            </button>
           </div>
+
+          {diagFallback && (
+            <textarea
+              readOnly
+              value={diagFallback}
+              onFocus={(e) => e.currentTarget.select()}
+              className="mt-3 h-48 w-full rounded-lg border border-divider-strong bg-panel p-3 font-mono text-[11px] leading-relaxed text-primary/80 outline-none"
+            />
+          )}
+
+          {diag.log_tail && (
+            <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-hover p-3 text-[11px] leading-relaxed text-primary/70">
+              {diag.log_tail}
+            </pre>
+          )}
         </div>
       </section>
+    </div>
+  );
+}
+
+/** 后端 get_diagnostics 返回的诊断快照 */
+type Diagnostics = {
+  log_path: string | null;
+  last_crash: boolean;
+  platform?: string;
+  arch?: string;
+  version?: string;
+  data_dir?: string | null;
+  mineru_configured?: boolean;
+  mineru_active?: boolean;
+  default_api_model?: string | null;
+  vision_configured?: boolean;
+  document_count?: number;
+  failed_task_count?: number;
+  log_tail?: string;
+  error?: string;
+};
+
+/** 诊断项：标签 + 取值，未配置时以警示色提示 */
+function DiagItem({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className="text-primary/45">{label}</span>
+      <span className={`truncate ${warn ? "text-warning-fg" : "text-primary/80"}`}>{value}</span>
     </div>
   );
 }

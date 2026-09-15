@@ -27,22 +27,78 @@ impl MinerUClient {
         h
     }
 
-    /// 构建 HTTP 客户端：显式加载代理（环境变量 HTTPS_PROXY/HTTP_PROXY 优先）
-    /// 当前启用了不安全证书验证（用于诊断代理中断问题），生产环境建议移除
-    fn http_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
-        let mut builder = reqwest::blocking::Client::builder();
-        let proxy_url = std::env::var("HTTPS_PROXY")
+    /// 环境变量代理地址（HTTPS_PROXY / HTTP_PROXY，大小写均识别）
+    fn proxy_url() -> Option<String> {
+        std::env::var("HTTPS_PROXY")
             .or_else(|_| std::env::var("https_proxy"))
             .or_else(|_| std::env::var("HTTP_PROXY"))
             .or_else(|_| std::env::var("http_proxy"))
             .ok()
-            .filter(|u| !u.is_empty());
-        if let Some(url) = proxy_url {
+            .filter(|u| !u.is_empty())
+    }
+
+    /// 构建 HTTP 客户端：显式加载代理（环境变量 HTTPS_PROXY/HTTP_PROXY 优先）
+    fn http_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
+        let mut builder = reqwest::blocking::Client::builder();
+        if let Some(url) = Self::proxy_url() {
             if let Ok(p) = reqwest::Proxy::all(&url) {
                 builder = builder.proxy(p);
             }
         }
         builder.build()
+    }
+
+    /// 下载专用客户端：no_proxy=true 时强制直连（忽略环境变量代理），
+    /// 否则走显式代理（无环境变量代理时退回 reqwest 默认行为）
+    fn download_client(no_proxy: bool) -> Result<reqwest::blocking::Client, String> {
+        let mut builder = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(600));
+        if no_proxy {
+            builder = builder.no_proxy();
+        } else if let Some(url) = Self::proxy_url() {
+            if let Ok(p) = reqwest::Proxy::all(&url) {
+                builder = builder.proxy(p);
+            }
+        }
+        builder
+            .build()
+            .map_err(|e| format!("构建下载客户端失败: {e}"))
+    }
+
+    /// 流式下载到本地文件（分块写入，避免整个结果包驻留内存）
+    fn download_to(url: &str, dest: &Path, no_proxy: bool) -> Result<(), String> {
+        let client = Self::download_client(no_proxy)?;
+        let mut resp = client
+            .get(url)
+            .send()
+            .map_err(|e| format!("请求失败: {e}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+        let mut file = std::fs::File::create(dest).map_err(|e| format!("创建文件失败: {e}"))?;
+        std::io::copy(&mut resp, &mut file).map_err(|e| format!("写入文件失败: {e}"))?;
+        Ok(())
+    }
+
+    /// 连通性与凭证自检：申请上传链接但不实际上传文件，因此不消耗解析页数。
+    /// 用于设置页「测试连接」，让用户先确认 Token 有效再导入文献。
+    pub fn probe(&self) -> Result<String, String> {
+        let client = Self::http_client().map_err(|e| e.to_string())?;
+        let resp = client
+            .post(format!("{}/file-urls/batch", self.base))
+            .headers(self.headers())
+            .json(&serde_json::json!({
+                "files": [{ "name": "probe.pdf", "language": "auto", "is_ocr": true }],
+                "model_version": "vlm"
+            }))
+            .send()
+            .map_err(|e| format!("无法连接 MinerU 服务: {e}"))?;
+        let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+        if body["code"] != 0 {
+            return Err(format!("MinerU 拒绝请求: {}", body["msg"]));
+        }
+        Ok("连接正常，Token 有效".to_string())
     }
 
     /// 提交本地 PDF：申请上传链接 → PUT 上传 → 返回 batch_id
@@ -140,7 +196,10 @@ impl MinerUClient {
     }
 
     /// 下载结果 zip 并解压到 dest，返回解压后的 Markdown 文件路径
-    /// 使用系统 curl 下载（对 CDN 兼容性最佳，行为与命令行一致）
+    ///
+    /// 通过 reqwest 下载，不依赖系统 curl —— Windows 10 1803 之前及部分精简镜像
+    /// 不含 curl.exe，且 Windows 自带 curl 处理非 ASCII（中文用户名）路径参数存在
+    /// 编码缺陷，会导致下载静默失败。
     pub fn download_extract(
         &self,
         result: &serde_json::Value,
@@ -153,37 +212,11 @@ impl MinerUClient {
         std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
         let zip_path = dest.join("result.zip");
 
-        // 用系统 curl 下载（macOS 必定自带）。
-        // 策略：结果 CDN 为国内节点，优先直连；失败后回退走系统代理。
-        let proxy = std::env::var("HTTPS_PROXY")
-            .or_else(|_| std::env::var("https_proxy"))
-            .ok()
-            .filter(|u| !u.is_empty());
-
-        let mut direct = std::process::Command::new("curl");
-        direct.args(["-sS", "-L", "--max-time", "600", "--noproxy", "*", "-o"]);
-        direct.arg(&zip_path).arg(zip_url);
-        let out = match direct.output() {
-            Ok(o) if o.status.success() => o,
-            _ => {
-                // 直连失败 → 走代理重试
-                let mut proxied = std::process::Command::new("curl");
-                proxied.args(["-sS", "-L", "--max-time", "600", "-o"]);
-                proxied.arg(&zip_path);
-                if let Some(p) = &proxy {
-                    proxied.args(["-x", p]);
-                }
-                proxied
-                    .arg(zip_url)
-                    .output()
-                    .map_err(|e| format!("curl 调用失败: {e}"))?
-            }
-        };
-        if !out.status.success() {
-            return Err(format!(
-                "结果下载失败: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
+        // 策略：结果 CDN 为国内节点，优先直连（忽略代理）；失败后回退走代理
+        if let Err(direct_err) = Self::download_to(zip_url, &zip_path, true) {
+            Self::download_to(zip_url, &zip_path, false).map_err(|proxy_err| {
+                format!("结果下载失败（直连: {direct_err}；代理: {proxy_err}）")
+            })?;
         }
 
         // 解压

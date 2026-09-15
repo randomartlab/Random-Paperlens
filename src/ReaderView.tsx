@@ -266,9 +266,10 @@ function MarkdownBody({
           // 相对路径（MinerU 产物：images/xxx.jpg）→ 本地绝对路径 → asset 协议 URL
           let resolved = src;
           if (src && !/^https?:\/\//.test(src)) {
-            resolved = convertFileSrc(
-              `${baseDir}/${src.replace(/^\.\//, "")}`,
-            );
+            // Windows 下 baseDir 带反斜杠（C:\...\parsed），直接拼接会形成
+            // 混合分隔符路径，导致 asset 协议（http://asset.localhost/...）解析失败、图片不显示
+            const dir = baseDir.replace(/\\/g, "/").replace(/\/+$/, "");
+            resolved = convertFileSrc(`${dir}/${src.replace(/^\.\//, "")}`);
           }
           // 视觉识别结果（如存在）：图片下方展示「类型 + 要点」
           const rel = src ? src.replace(/^\.\//, "") : "";

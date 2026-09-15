@@ -35,7 +35,9 @@ static LAST_CRASH: AtomicBool = AtomicBool::new(false);
 /// 全局应用状态：数据库连接（互斥保护，供多命令共享）+ 翻译任务控制标志
 struct AppState {
     conn: Mutex<Connection>,
-    mineru: Option<MinerUClient>,
+    /// MinerU 客户端：设置页保存 Token 后立即重建（无需重启应用）；
+    /// 内部可变，故用 Mutex 包裹
+    mineru: Mutex<Option<MinerUClient>>,
     translation_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
@@ -199,20 +201,40 @@ fn load_mineru_key(conn: &Connection, app: &tauri::AppHandle) -> Option<String> 
     None
 }
 
-/// 查询 MinerU Token 是否已由用户配置（不回传 Key 本身）
+/// 查询 MinerU Token 配置状态（不回传 Key 本身）
+/// configured：设置页是否已填；active：当前会话是否真的拿到了可用客户端
 #[tauri::command]
 fn get_mineru_key(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "configured": !read_setting(&conn, "mineru_api_key").is_empty() }))
+    let configured = {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        !read_setting(&conn, "mineru_api_key").is_empty()
+    };
+    let active = state.mineru.lock().map(|m| m.is_some()).unwrap_or(false);
+    Ok(json!({ "configured": configured, "active": active }))
 }
 
 /// 保存用户自填的 MinerU Token（空串 = 清除，回退 .env / 环境变量）
+///
+/// 保存后立即重建内存中的客户端，当前会话即可用于解析，无需重启应用
+/// （旧实现只在启动时加载一次，导致设置页填完 Token 仍提示"未配置"）。
 #[tauri::command]
-fn set_mineru_key(key: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+fn set_mineru_key(
+    key: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let key = key.trim().to_string();
-    write_setting(&conn, "mineru_api_key", &key)?;
-    logging::info("MinerU Token 已更新（用户设置页）");
+    // 先写库并算出新的客户端，再单独取 mineru 锁，避免与解析线程的加锁顺序交叉
+    let next = {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        write_setting(&conn, "mineru_api_key", &key)?;
+        load_mineru_key(&conn, &app).map(MinerUClient::new)
+    };
+    {
+        let mut slot = state.mineru.lock().map_err(|e| e.to_string())?;
+        *slot = next;
+    }
+    logging::info("MinerU Token 已更新（用户设置页），解析客户端已重建");
     Ok(())
 }
 
@@ -230,6 +252,21 @@ struct Document {
     language: Option<String>,
     read_status: String,
     created_at: String,
+}
+
+/// 规范化路径字符串，用于入库与去重比较
+///
+/// Windows 的 `canonicalize` 返回 `\\?\C:\...` 形式的扩展长度前缀，
+/// 直接入库会让同一份文件在不同写法下无法去重，且展示不友好，此处剥离该前缀。
+fn normalize_path_str(p: &Path) -> String {
+    let s = p.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    s
 }
 
 /// PDF 导入：校验 → 去重 → 落盘 → 入库
@@ -263,10 +300,10 @@ fn import_document(
 
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
 
-    // 3. 重复导入检测（按真实路径）
+    // 3. 重复导入检测（按规范化后的真实路径）
     let canon = std::fs::canonicalize(&path)
         .map_err(|e| error_code::err(error_code::IMPORT_IO, format!("无法访问文件: {e}")))?;
-    let canon_str = canon.to_str().unwrap_or("").to_string();
+    let canon_str = normalize_path_str(&canon);
     let exists: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM documents WHERE file_path = ?1)",
@@ -326,9 +363,10 @@ fn start_parse(
 ) -> Result<(), String> {
     let mineru = state
         .mineru
-        .as_ref()
-        .ok_or("MinerU API Key 未配置（请检查项目 .env 或环境变量）")?
-        .clone();
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or("MinerU Token 未配置：请在「设置 → 解析（MinerU）」填入 Token（mineru.net 控制台获取）后重试")?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
     // 1. 取文献源文件路径（快速，短暂持锁）
@@ -1990,15 +2028,94 @@ fn delete_glossary_entry(term: String, state: tauri::State<'_, AppState>) -> Res
     Ok(())
 }
 
-/// 诊断信息（M5.2）：日志文件路径 + 上次是否异常退出
+/// 诊断信息（M5.2）：平台 / 路径 / 关键配置状态 / 最近日志
+///
+/// 面向"装在别人机器上"的排障场景：一次调用即可拿到问题现场，
+/// 不必让使用者描述现象或手动翻日志文件。
 #[tauri::command]
-fn get_diagnostics() -> serde_json::Value {
-    let log_path = logging::log_dir()
-        .map(|d| d.join("litdesk.log").to_string_lossy().to_string());
+fn get_diagnostics(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> serde_json::Value {
+    let log_path = logging::log_dir().map(|d| d.join("litdesk.log").to_string_lossy().to_string());
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+
+    let (mineru_configured, default_api_model, vision_configured, document_count, failed_task_count) = {
+        let conn = match state.conn.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                return json!({
+                    "platform": std::env::consts::OS,
+                    "arch": std::env::consts::ARCH,
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "log_path": log_path,
+                    "error": "数据库锁获取失败",
+                })
+            }
+        };
+        let mineru_configured = !read_setting(&conn, "mineru_api_key").is_empty();
+        let default_api_model: Option<String> = conn
+            .query_row(
+                "SELECT model FROM api_configs WHERE is_default = 1 LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        let vision_configured = !read_setting(&conn, "vision_base_url").is_empty();
+        let document_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .unwrap_or(0);
+        let failed_task_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE status = 'failed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        (
+            mineru_configured,
+            default_api_model,
+            vision_configured,
+            document_count,
+            failed_task_count,
+        )
+    };
+
+    let mineru_active = state.mineru.lock().map(|m| m.is_some()).unwrap_or(false);
+
     json!({
+        "platform": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "version": env!("CARGO_PKG_VERSION"),
+        "data_dir": data_dir,
         "log_path": log_path,
         "last_crash": LAST_CRASH.load(Ordering::Relaxed),
+        "mineru_configured": mineru_configured,
+        "mineru_active": mineru_active,
+        "default_api_model": default_api_model,
+        "vision_configured": vision_configured,
+        "document_count": document_count,
+        "failed_task_count": failed_task_count,
+        "log_tail": logging::tail(60),
     })
+}
+
+/// 测试 MinerU 连接（设置页按钮）
+///
+/// 只申请上传链接、不上传文件，不消耗解析页数；把连通性与凭证问题
+/// 暴露在配置阶段，而不是等到导入文献解析失败才发现。
+#[tauri::command]
+fn test_mineru_connection(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let client = state
+        .mineru
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or("MinerU Token 未配置：请先填入 Token 并保存")?;
+    client.probe()
 }
 
 /// 本地统计快照（M5.1）：返回当前开关状态与各事件计数/耗时
@@ -2117,7 +2234,7 @@ pub fn run() {
             let mineru = load_mineru_key(&conn, app.handle()).map(MinerUClient::new);
             app.manage(AppState {
                 conn: Mutex::new(conn),
-                mineru,
+                mineru: Mutex::new(mineru),
                 translation_controls: Mutex::new(HashMap::new()),
             });
             Ok(())
@@ -2163,6 +2280,7 @@ pub fn run() {
             set_stats_enabled,
             reset_stats,
             get_diagnostics,
+            test_mineru_connection,
             list_notes,
             read_note,
             save_note,

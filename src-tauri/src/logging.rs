@@ -35,6 +35,27 @@ pub fn log_dir() -> Option<&'static PathBuf> {
     LOG_DIR.get()
 }
 
+/// 读取日志末尾若干行（最多 8000 字符），供诊断面板一键回传，
+/// 免去让用户自行定位日志文件
+pub fn tail(lines_wanted: usize) -> String {
+    let Some(dir) = LOG_DIR.get() else {
+        return String::new();
+    };
+    let Ok(content) = std::fs::read_to_string(dir.join("litdesk.log")) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    let start = lines.len().saturating_sub(lines_wanted);
+    let tail = lines[start..].join("\n");
+    const MAX_CHARS: usize = 8000;
+    let count = tail.chars().count();
+    if count <= MAX_CHARS {
+        tail
+    } else {
+        tail.chars().skip(count - MAX_CHARS).collect()
+    }
+}
+
 fn write(level: &str, msg: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("[{ts}][{level}] {msg}\n");

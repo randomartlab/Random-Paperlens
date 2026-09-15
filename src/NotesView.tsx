@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { appDataDir } from "@tauri-apps/api/path";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import ReactMarkdown from "react-markdown";
@@ -149,8 +149,9 @@ function NotesView() {
 
   const revealDir = async () => {
     try {
-      const dir = await appDataDir();
-      await revealItemInDir(`${dir}/notes`);
+      // 用 Tauri 的 join 按平台生成分隔符（Windows 需原生反斜杠，explorer 对正斜杠不友好）
+      const dir = await join(await appDataDir(), "notes");
+      await revealItemInDir(dir);
     } catch (e) {
       setNotice(String(e));
     }

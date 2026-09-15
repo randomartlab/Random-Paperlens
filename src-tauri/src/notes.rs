@@ -16,19 +16,41 @@ pub fn notes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// 校验并规范化笔记文件名（去路径分隔符 / 非法字符，补 .md 后缀）
+/// 校验并规范化笔记文件名
+///
+/// 过滤两平台非法字符的并集：Windows 为 `\ / : * ? " < > |`，macOS 为 `: /`；
+/// 同时剔除控制字符与结尾的点/空格，并规避 Windows 保留设备名 ——
+/// 否则用户在笔记名里输入 `*` `?` 等字符时，Windows 上写文件会直接失败（macOS 无此限制）。
 fn sanitize_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .filter(|c| !matches!(c, '/' | '\\' | ':' | '\0'))
+        .filter(|c| {
+            !matches!(
+                c,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'
+            )
+        })
+        .filter(|c| !c.is_control())
         .take(120)
         .collect();
+    // Windows 会静默丢弃结尾的点与空格，先自行去掉，保证落盘名可预期
     let cleaned = cleaned.trim().to_string();
+    let cleaned = cleaned
+        .trim_end_matches(|c: char| c == '.' || c == ' ')
+        .trim()
+        .to_string();
     if cleaned.is_empty() {
-        "未命名笔记".to_string()
-    } else {
-        cleaned
+        return "未命名笔记".to_string();
     }
+    // Windows 保留设备名不可作为文件名，追加下划线规避
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&cleaned.to_ascii_uppercase().as_str()) {
+        return format!("{cleaned}_");
+    }
+    cleaned
 }
 
 fn escape_html(s: &str) -> String {
@@ -308,4 +330,33 @@ pub fn replace_in_notes(
         out.push(serde_json::json!({ "name": n, "count": count }));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_name;
+
+    /// Windows 非法字符必须被剔除，否则在 Windows 上写文件会直接失败（macOS 无此限制）
+    #[test]
+    fn sanitize_strips_cross_platform_illegal_chars() {
+        assert_eq!(sanitize_name("研究*进展?"), "研究进展");
+        assert_eq!(sanitize_name("a<b>c|d\"e"), "abcde");
+        assert_eq!(sanitize_name("路径/穿越\\攻击"), "路径穿越攻击");
+        assert_eq!(sanitize_name("冒号:分隔"), "冒号分隔");
+    }
+
+    /// Windows 会静默丢弃结尾的点与空格，且保留设备名不可作文件名
+    #[test]
+    fn sanitize_handles_trailing_dots_and_reserved_names() {
+        assert_eq!(sanitize_name("结尾点..."), "结尾点");
+        assert_eq!(sanitize_name("末尾空格   "), "末尾空格");
+        assert_eq!(sanitize_name("CON"), "CON_");
+        assert_eq!(sanitize_name("com1"), "com1_");
+    }
+
+    #[test]
+    fn sanitize_falls_back_for_empty() {
+        assert_eq!(sanitize_name("   "), "未命名笔记");
+        assert_eq!(sanitize_name("///"), "未命名笔记");
+    }
 }
