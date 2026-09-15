@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { message, open } from "@tauri-apps/plugin-dialog";
+import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import ReaderView from "./ReaderView";
@@ -243,6 +243,14 @@ function App() {
   };
 
   const handleTranslate = async (doc: Doc) => {
+    // 中文论文的翻译方向是「中 → 英」，与直觉相反（通常期待译成中文），先确认再执行
+    if (doc.language === "中文") {
+      const ok = await ask(
+        "该文献为中文论文，翻译将生成英文译文（中文 → 英文）。\n\n中文文献通常无需翻译即可直接「识别范式」与「拆解」，是否仍要翻译？",
+        { title: "确认翻译方向", kind: "info" },
+      );
+      if (!ok) return;
+    }
     try {
       setTranslating((t) => ({
         ...t,
@@ -824,9 +832,12 @@ function App() {
                     <div className="flex shrink-0 items-center gap-1.5">
                       <button
                         onClick={() => handleTranslate(d)}
+                        title={
+                          d.language === "中文" ? "中文论文将翻译为英文" : "翻译为中文"
+                        }
                         className="rounded-lg bg-sky-600/90 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-sky-600"
                       >
-                        翻译
+                        {d.language === "中文" ? "翻译为英文" : "翻译"}
                       </button>
                       <button
                         onClick={() => handleRecognize(d)}

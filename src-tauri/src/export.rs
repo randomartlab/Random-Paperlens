@@ -13,42 +13,100 @@ pub struct ExportParts {
     pub digest: Option<String>,
 }
 
-/// 拼装 Markdown（三段式）
-pub fn compose_markdown(parts: &ExportParts) -> String {
-    let mut out = format!("# {}\n\n", parts.title);
-    out.push_str("> 由文献阅读台导出\n\n---\n\n");
-    out.push_str("## 原文\n\n");
-    out.push_str(&parts.original);
-    out.push_str("\n\n---\n\n");
-    if let Some(t) = &parts.translated {
-        out.push_str("## 译文\n\n");
-        out.push_str(t);
-        out.push_str("\n\n---\n\n");
+/// 导出内容范围：决定哪些部分写入导出文件
+///
+/// - `all`：原文 + 译文 + 拆解
+/// - `no-original`：译文 + 拆解（除原文外的全部解析内容）
+/// - `bilingual`：原文 + 译文
+/// - `translated`：仅译文（中文翻译）
+/// - `digest`：仅拆解结果
+#[derive(Clone, Copy)]
+pub struct ExportScope {
+    pub original: bool,
+    pub translated: bool,
+    pub digest: bool,
+}
+
+impl ExportScope {
+    pub fn parse(scope: &str) -> Self {
+        match scope {
+            "no-original" => Self {
+                original: false,
+                translated: true,
+                digest: true,
+            },
+            "bilingual" => Self {
+                original: true,
+                translated: true,
+                digest: false,
+            },
+            "translated" => Self {
+                original: false,
+                translated: true,
+                digest: false,
+            },
+            "digest" => Self {
+                original: false,
+                translated: false,
+                digest: true,
+            },
+            _ => Self {
+                original: true,
+                translated: true,
+                digest: true,
+            },
+        }
     }
-    if let Some(d) = &parts.digest {
-        out.push_str("## AI 拆解\n\n");
-        out.push_str(d);
-        out.push('\n');
+}
+
+/// 拼装 Markdown（按导出范围择取章节）
+pub fn compose_markdown(parts: &ExportParts, scope: &str) -> String {
+    let scope = ExportScope::parse(scope);
+    let mut out = format!("# {}\n\n", parts.title);
+    out.push_str("> 由 Rd学术阅读器导出\n\n");
+    if scope.original {
+        out.push_str("---\n\n## 原文\n\n");
+        out.push_str(&parts.original);
+        out.push_str("\n\n");
+    }
+    if scope.translated {
+        if let Some(t) = &parts.translated {
+            out.push_str("---\n\n## 译文\n\n");
+            out.push_str(t);
+            out.push_str("\n\n");
+        }
+    }
+    if scope.digest {
+        if let Some(d) = &parts.digest {
+            out.push_str("---\n\n## AI 拆解\n\n");
+            out.push_str(d);
+            out.push('\n');
+        }
     }
     out
 }
 
-/// 拼装自包含 HTML（内嵌图片 + 主题）
-pub fn compose_html(parts: &ExportParts, base_dir: &Path, theme: &str) -> String {
+/// 拼装自包含 HTML（内嵌图片 + 主题，按导出范围择取章节）
+pub fn compose_html(parts: &ExportParts, base_dir: &Path, theme: &str, scope: &str) -> String {
+    let scope = ExportScope::parse(scope);
+    let mut sections: Vec<String> = Vec::new();
+    if scope.original {
+        sections.push(section_html("原文", &parts.original, base_dir));
+    }
+    if scope.translated {
+        if let Some(t) = &parts.translated {
+            sections.push(section_html("译文", t, base_dir));
+        }
+    }
+    if scope.digest {
+        if let Some(d) = &parts.digest {
+            sections.push(section_html("AI 拆解", d, base_dir));
+        }
+    }
     let body = format!(
-        "<h1>{}</h1>\n<p class=\"meta\">由 Rd学术阅读器导出</p>\n{}\n<hr/>\n{}\n<hr/>\n{}\n",
+        "<h1>{}</h1>\n<p class=\"meta\">由 Rd学术阅读器导出</p>\n{}",
         escape_html(&parts.title),
-        section_html("原文", &parts.original, base_dir),
-        parts
-            .translated
-            .as_deref()
-            .map(|t| section_html("译文", t, base_dir))
-            .unwrap_or_default(),
-        parts
-            .digest
-            .as_deref()
-            .map(|d| section_html("AI 拆解", d, base_dir))
-            .unwrap_or_default(),
+        sections.join("\n<hr/>\n")
     );
     format!(
         "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/>\
@@ -437,10 +495,41 @@ mod tests {
             translated: Some("trans".into()),
             digest: Some("dig".into()),
         };
-        let md = compose_markdown(&parts);
+        let md = compose_markdown(&parts, "all");
         assert!(md.contains("## 原文"));
         assert!(md.contains("## 译文"));
         assert!(md.contains("## AI 拆解"));
+    }
+
+    /// 导出范围须精确控制章节取舍：仅译文不得夹带原文，仅拆解不得夹带译文
+    #[test]
+    fn compose_markdown_respects_scope() {
+        let parts = ExportParts {
+            title: "T".into(),
+            original: "ORIGINAL-BODY".into(),
+            translated: Some("TRANSLATED-BODY".into()),
+            digest: Some("DIGEST-BODY".into()),
+        };
+
+        let only_translated = compose_markdown(&parts, "translated");
+        assert!(only_translated.contains("TRANSLATED-BODY"));
+        assert!(!only_translated.contains("ORIGINAL-BODY"));
+        assert!(!only_translated.contains("DIGEST-BODY"));
+
+        let no_original = compose_markdown(&parts, "no-original");
+        assert!(!no_original.contains("ORIGINAL-BODY"));
+        assert!(no_original.contains("TRANSLATED-BODY"));
+        assert!(no_original.contains("DIGEST-BODY"));
+
+        let only_digest = compose_markdown(&parts, "digest");
+        assert!(only_digest.contains("DIGEST-BODY"));
+        assert!(!only_digest.contains("ORIGINAL-BODY"));
+        assert!(!only_digest.contains("TRANSLATED-BODY"));
+
+        let bilingual = compose_markdown(&parts, "bilingual");
+        assert!(bilingual.contains("ORIGINAL-BODY"));
+        assert!(bilingual.contains("TRANSLATED-BODY"));
+        assert!(!bilingual.contains("DIGEST-BODY"));
     }
 
     #[test]
@@ -451,7 +540,7 @@ mod tests {
             translated: None,
             digest: None,
         };
-        let html = compose_html(&parts, Path::new("/tmp"), "sepia");
+        let html = compose_html(&parts, Path::new("/tmp"), "sepia", "all");
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("#f5ecd9"));
         assert!(html.contains("<h1>T</h1>"));

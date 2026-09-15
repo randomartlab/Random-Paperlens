@@ -18,6 +18,7 @@ pub struct ParadigmInput {
     pub abstract_text: String, // 摘要（或开头若干段落，含 Keywords 行）
     pub headings: Vec<String>, // 章节标题（已去 # 标记）
     pub body_sample: String,   // 正文样本（前若干字符，用于关键词命中）
+    pub keywords: String,      // 关键词行（作者自述领域，用于学科识别）
     pub table_count: usize,
     pub image_count: usize,
     pub math_symbols: usize, // md 中 $ 出现次数（判断是否含公式）
@@ -98,13 +99,57 @@ const PARADIGMS: &[ParadigmSpec] = &[
     ParadigmSpec {
         id: "paradigm-experimental-baseline",
         name: "实验对比型范式",
+        // 补齐 IMRaD 通用章节信号：此前只认 Experiments/Benchmark/ablation study，
+        // 导致章节为 Methods/Results/Participants 的实验论文一个专属词都命中不了，
+        // 进而被反向误判为理论论述型
         sections: &[
-            "experiments", "benchmark", "ablation study", "实验", "基准",
+            "experiment",
+            "experimental",
+            "benchmark",
+            "ablation study",
+            "evaluation",
+            "results",
+            "finding",
+            "participant",
+            "subject",
+            "condition",
+            "treatment",
+            "实验",
+            "基准",
+            "结果",
+            "被试",
+            "参与者",
+            "实验组",
+            "对照组",
         ],
         keywords: &[
-            "baseline", "state-of-the-art", "sota", "ablation", "f1-score",
-            "top-1", "backbone", "hyperparameter", "benchmark",
-            "基线", "消融", "准确率", "数据集",
+            "baseline",
+            "state-of-the-art",
+            "sota",
+            "ablation",
+            "f1-score",
+            "top-1",
+            "backbone",
+            "hyperparameter",
+            "benchmark",
+            "experiment",
+            "participant",
+            "condition",
+            "treatment",
+            "control group",
+            "anova",
+            "questionnaire",
+            "likert",
+            "survey",
+            "基线",
+            "消融",
+            "准确率",
+            "数据集",
+            "被试",
+            "问卷",
+            "量表",
+            "实验组",
+            "对照组",
         ],
         object_label: "指标/数据对比表格",
     },
@@ -209,6 +254,104 @@ const PARADIGMS: &[ParadigmSpec] = &[
         ],
         object_label: "系统架构图",
     },
+];
+
+/// 实证研究通用结构信号（独立于各范式专属章节词典）
+///
+/// 用于判定论文是否具备实证研究骨架。此前该判断复用"其他范式的专属章节词"，
+/// 专属词典覆盖不足时（如章节名为 Methods/Results 的社科实验论文）
+/// 会得出"没有实证章节"的结论，反而把理论论述型推上满分。
+const EMPIRICAL_STRUCTURE_SECTIONS: &[&str] = &[
+    "method",
+    "methodology",
+    "research design",
+    "participant",
+    "subject",
+    "data collection",
+    "procedure",
+    "experiment",
+    "results",
+    "finding",
+    "data analysis",
+    "measurement",
+    "questionnaire",
+    "survey",
+    "方法",
+    "研究设计",
+    "被试",
+    "参与者",
+    "数据收集",
+    "实验",
+    "结果",
+    "数据分析",
+    "问卷",
+    "量表",
+];
+
+/// 实证研究的统计 / 方法学关键词（正文层，子串匹配以覆盖词形变化）
+const EMPIRICAL_STATS_KEYWORDS: &[&str] = &[
+    "anova",
+    "regression",
+    "correlation",
+    "significan",
+    "cronbach",
+    "likert",
+    "standard deviation",
+    "hypothesis",
+    "sample size",
+    "spss",
+    "t-test",
+    "chi-square",
+    "confidence interval",
+    "effect size",
+    "within-subjects",
+    "between-subjects",
+    "方差分析",
+    "回归",
+    "显著性",
+    "信度",
+    "效度",
+    "量表",
+    "假设检验",
+    "样本量",
+];
+
+/// 判定论文是否具备实证研究骨架：≥2 个结构章节，或 ≥1 个结构章节且 ≥2 个统计方法词
+fn is_empirical_research(headings: &[String], haystack: &str) -> bool {
+    let lower: Vec<String> = headings.iter().map(|h| h.to_lowercase()).collect();
+    let section_hits = EMPIRICAL_STRUCTURE_SECTIONS
+        .iter()
+        .filter(|s| lower.iter().any(|h| h.contains(**s)))
+        .count();
+    if section_hits >= 2 {
+        return true;
+    }
+    if section_hits == 0 {
+        return false;
+    }
+    EMPIRICAL_STATS_KEYWORDS
+        .iter()
+        .filter(|k| haystack.contains(**k))
+        .count()
+        >= 2
+}
+
+/// 学科识别的弱信号词：跨学科论文中高频出现、区分度低，
+/// 仅当出现在标题 / 关键词中才计分（正文与摘要中出现不计），
+/// 避免 "communication / media / design" 等泛用词把论文误判到新闻传播学、设计学
+const WEAK_DISCIPLINE_TERMS: &[&str] = &[
+    "communication",
+    "media",
+    "design",
+    "behavior",
+    "behaviour",
+    "experience",
+    "system",
+    "technology",
+    "information",
+    "learning",
+    "management",
+    "art",
 ];
 
 /// 学科大类→范式先验（report.md §4）：命中学科关键词后为主/次范式加分
@@ -374,15 +517,9 @@ pub fn recognize(input: &ParadigmInput) -> ParadigmRecognition {
     )
     .to_lowercase();
 
-    // 理论论述型的反向信号：若存在其他实证范式章节信号，则理论章节分置 0
-    let has_empirical_sections = PARADIGMS.iter().enumerate().any(|(i, p)| {
-        i != 3
-            && !p.sections.is_empty()
-            && input
-                .headings
-                .iter()
-                .any(|h| h.to_lowercase().contains_any_of(p.sections))
-    });
+    // 实证骨架检测（独立于范式专属词典）：替代此前"是否有其他范式的专属章节命中"
+    // 这一覆盖不足的反向信号 —— 它会让 Methods/Results 结构的论文被反判为理论论述型
+    let empirical_study = is_empirical_research(&input.headings, &haystack);
 
     // 学科先验加分
     let mut prior: Vec<f64> = vec![0.0; PARADIGMS.len()];
@@ -394,13 +531,22 @@ pub fn recognize(input: &ParadigmInput) -> ParadigmRecognition {
     }
 
     // —— 国内学科识别（2022 目录口径）：按关键词命中数打分，命中 4 个视为高置信 ——
+    // 弱信号词（communication/media/design 等）只在标题与关键词中计分：
+    // 这些词在任何跨学科论文的正文里都会出现，用全文匹配会主导学科判定
+    let title_kw_hay = format!("{} {}", input.title, input.keywords).to_lowercase();
     let mut dom_scores: Vec<(usize, &DomesticSpec, Vec<&'static str>)> = DOMESTIC_DISCIPLINES
         .iter()
         .map(|d| {
             let matched: Vec<&'static str> = d
                 .keywords
                 .iter()
-                .filter(|k| word_hits(&haystack, k))
+                .filter(|k| {
+                    if WEAK_DISCIPLINE_TERMS.contains(k) {
+                        word_hits(&title_kw_hay, k)
+                    } else {
+                        word_hits(&haystack, k)
+                    }
+                })
                 .cloned()
                 .collect();
             (matched.len(), d, matched)
@@ -446,7 +592,13 @@ pub fn recognize(input: &ParadigmInput) -> ParadigmRecognition {
                 let matched: Vec<&'static str> = d
                     .keywords
                     .iter()
-                    .filter(|k| word_hits(&haystack, k))
+                    .filter(|k| {
+                        if WEAK_DISCIPLINE_TERMS.contains(k) {
+                            word_hits(&title_kw_hay, k)
+                        } else {
+                            word_hits(&haystack, k)
+                        }
+                    })
                     .cloned()
                     .collect();
                 (matched.len(), d, matched)
@@ -521,7 +673,8 @@ pub fn recognize(input: &ParadigmInput) -> ParadigmRecognition {
             .collect();
         // 章节命中：命中 2 个专属章节即视为满分（多数论文只有 2-3 个关键章节）
         let section_hit = if p.sections.is_empty() {
-            if has_empirical_sections {
+            // 理论论述型：仅当论文确实不具备实证骨架时才成立
+            if empirical_study {
                 0.0
             } else {
                 1.0
@@ -624,7 +777,8 @@ pub fn recognize(input: &ParadigmInput) -> ParadigmRecognition {
     ParadigmRecognition {
         paradigm_id: primary.id.to_string(),
         paradigm_name: primary.name.to_string(),
-        confidence: best.score,
+        // 各分项与学科先验相加后可能略超 1，收敛到 [0,1] 便于前端直接当百分比展示
+        confidence: best.score.min(1.0),
         identification_basis: primary_basis,
         cross_type,
         secondary_paradigms: secondary,
@@ -651,23 +805,22 @@ fn word_hits(hay: &str, kw: &str) -> bool {
         let abs = start + pos;
         let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
         let after = abs + kw.len();
-        let after_ok = after >= bytes.len() || !bytes[after].is_ascii_alphanumeric();
+        // 允许英文复数/第三人称单数后缀：纯词边界匹配会漏掉最常见的词形变化
+        // （participant → participants、experiment → experiments）
+        let after_ok = after >= bytes.len()
+            || !bytes[after].is_ascii_alphanumeric()
+            || (bytes[after] == b's'
+                && (after + 1 >= bytes.len() || !bytes[after + 1].is_ascii_alphanumeric()))
+            || (bytes[after] == b'e'
+                && after + 1 < bytes.len()
+                && bytes[after + 1] == b's'
+                && (after + 2 >= bytes.len() || !bytes[after + 2].is_ascii_alphanumeric()));
         if before_ok && after_ok {
             return true;
         }
         start = abs + kw.len();
     }
     false
-}
-
-/// 辅助：字符串是否包含任一子串
-trait ContainsAnyOf {
-    fn contains_any_of(&self, subs: &[&str]) -> bool;
-}
-impl ContainsAnyOf for str {
-    fn contains_any_of(&self, subs: &[&str]) -> bool {
-        subs.iter().any(|s| self.contains(*s))
-    }
 }
 
 #[cfg(test)]
@@ -734,6 +887,51 @@ mod tests {
         };
         let r = recognize(&input);
         assert_eq!(r.paradigm_id, "paradigm-empirical-stat");
+    }
+
+    /// 回归用例：VR 聊天机器人实验论文（Methods / Participants / Results 结构）
+    ///
+    /// 实测中曾被误判为"理论论述型"并归入新闻传播学。原因是专属章节词典缺少
+    /// IMRaD 通用章节名，导致 Theory 型靠"无实证章节"的反向信号拿满分；
+    /// 学科则被正文里的 communication / media 等泛用词带偏。
+    #[test]
+    fn social_science_experiment_not_misjudged_as_theoretical() {
+        let input = ParadigmInput {
+            title: "Confiding to AI: Impacts of ICE Framework-Based Body Movements of VR Chatbots on User Self-Disclosure and Experience".into(),
+            abstract_text: "This study proposes the ICE Movements Framework and conducted a single-factor within-subjects experiment involving 56 university students. Quantitative and qualitative results revealed that body movements significantly enhanced users' self-disclosure willingness, satisfaction, trust, and intention to use.".into(),
+            keywords: "Artificial intelligence; virtual reality; chatbots; physical movements; self-disclosure".into(),
+            headings: vec![
+                "ABSTRACT".into(),
+                "1. Introduction".into(),
+                "2. Related studies".into(),
+                "3. Methods".into(),
+                "3.5. Participants".into(),
+                "3.6. Quantitative data - scale measurement".into(),
+                "3.9. Data statistics and analyses".into(),
+                "4. Results".into(),
+                "5. Discussion".into(),
+            ],
+            body_sample: "the experiment involved 56 participants; ANOVA showed significant differences across conditions; reliability and validity were evaluated".into(),
+            table_count: 6,
+            image_count: 12,
+            math_symbols: 0,
+            ..Default::default()
+        };
+        let r = recognize(&input);
+        assert_ne!(
+            r.paradigm_id, "paradigm-theoretical",
+            "具备 Methods/Results 结构的实证论文不应被判为理论论述型"
+        );
+        assert_eq!(r.paradigm_id, "paradigm-experimental-baseline");
+        assert!(
+            r.confidence > 0.7,
+            "识别置信度应反映明确的结构信号，实际为 {}",
+            r.confidence
+        );
+        assert_ne!(
+            r.domestic.discipline, "新闻传播学",
+            "学科不应因正文中的 communication / media 等泛用词被误判"
+        );
     }
 
     #[test]

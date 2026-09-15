@@ -473,6 +473,16 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   const [editFields, setEditFields] = useState<DigestField[] | null>(null);
   const [savingDigest, setSavingDigest] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
+  // 导出内容范围：默认「除原文外全部」—— 原文 PDF 本就在手边，全量导出价值不大
+  const [exportScope, setExportScope] = useState("no-original");
+  // 标注：value 与后端 ExportScope::parse 的取值一一对应
+  const EXPORT_SCOPES = [
+    { value: "translated", label: "中文译文" },
+    { value: "bilingual", label: "双语对照" },
+    { value: "digest", label: "拆解结果" },
+    { value: "no-original", label: "除原文外全部" },
+    { value: "all", label: "全部内容" },
+  ];
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   // F8 摘录：自定义右键菜单（选中文本时出现）
@@ -512,7 +522,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     if (!path) return;
     setExporting(true);
     try {
-      await invoke("export_document", { docId, format, theme, outPath: path });
+      await invoke("export_document", { docId, format, theme, scope: exportScope, outPath: path });
       setExportMsg("导出成功");
       setTimeout(() => setExportMsg(null), 2500);
     } catch (e) {
@@ -528,7 +538,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     setExportMenu(false);
     setExporting(true);
     try {
-      await invoke("print_document", { docId, theme });
+      await invoke("print_document", { docId, theme, scope: exportScope });
       setExportMsg("打印窗口已打开，在打印面板中选择「存储为 PDF」");
       setTimeout(() => setExportMsg(null), 4000);
     } catch (e) {
@@ -821,7 +831,25 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
             {exporting ? "导出中…" : "导出"}
           </button>
           {exportMenu && (
-            <div className="absolute right-0 top-9 z-20 w-52 overflow-hidden rounded-lg border border-divider-strong bg-panel py-1 shadow-lg">
+            <div className="absolute right-0 top-9 z-20 w-56 overflow-hidden rounded-lg border border-divider-strong bg-panel py-1 shadow-lg">
+              <div className="border-b border-divider px-3 py-2">
+                <div className="mb-1.5 text-[11px] text-primary/45">导出内容</div>
+                <div className="flex flex-wrap gap-1">
+                  {EXPORT_SCOPES.map((s) => (
+                    <button
+                      key={s.value}
+                      onClick={() => setExportScope(s.value)}
+                      className={`rounded-md px-2 py-0.5 text-[11px] transition-colors ${
+                        exportScope === s.value
+                          ? "bg-primary/90 text-primary-inverse"
+                          : "bg-hover text-primary/65 hover:text-primary/85"
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
                 onClick={() => void handleExport("md", "light")}
                 className="block w-full px-3 py-1.5 text-left text-xs text-primary/75 hover:bg-hover"

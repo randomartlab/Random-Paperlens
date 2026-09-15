@@ -1530,6 +1530,7 @@ async fn export_document(
     doc_id: String,
     format: String, // "md" | "html"
     theme: String,  // "light" | "sepia"（仅 html 生效）
+    scope: String,  // all | no-original | bilingual | translated | digest
     out_path: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -1537,7 +1538,7 @@ async fn export_document(
     let log_doc = doc_id.clone();
     let log_fmt = format.clone();
     let r: Result<String, String> = tauri::async_runtime::spawn_blocking(move || {
-        export_document_sync(&app, &doc_id, &format, &theme, &out_path)
+        export_document_sync(&app, &doc_id, &format, &theme, &scope, &out_path)
     })
     .await
     .map_err(|e| format!("导出线程异常: {e}"))?;
@@ -1560,13 +1561,14 @@ fn export_document_sync(
     doc_id: &str,
     format: &str,
     theme: &str,
+    scope: &str,
     out_path: &str,
 ) -> Result<String, String> {
     let (parts, parsed_dir) = build_export_parts(app, doc_id)?;
     let content = if format == "html" {
-        export::compose_html(&parts, &parsed_dir, theme)
+        export::compose_html(&parts, &parsed_dir, theme, scope)
     } else {
-        export::compose_markdown(&parts)
+        export::compose_markdown(&parts, scope)
     };
     std::fs::write(out_path, content).map_err(|e| format!("写入导出文件失败: {e}"))?;
     Ok(out_path.to_string())
@@ -1640,6 +1642,7 @@ fn build_export_parts(
 async fn print_document(
     doc_id: String,
     theme: String, // "light" | "sepia"
+    scope: String, // all | no-original | bilingual | translated | digest
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let t_print = std::time::Instant::now();
@@ -1654,8 +1657,9 @@ async fn print_document(
         .map_err(|e| format!("打印线程异常: {e}"))??;
 
         let theme2 = theme.clone();
+        let scope2 = scope.clone();
         let html = tauri::async_runtime::spawn_blocking(move || {
-            export::compose_html(&parts, &parsed_dir, &theme2)
+            export::compose_html(&parts, &parsed_dir, &theme2, &scope2)
         })
         .await
         .map_err(|e| format!("打印线程异常: {e}"))?;
@@ -1776,6 +1780,7 @@ fn build_paradigm_input(
         abstract_text,
         headings,
         body_sample: body_sample.chars().take(6000).collect(),
+        keywords: keywords_line,
         table_count,
         image_count,
         math_symbols: md.matches('$').count(),
