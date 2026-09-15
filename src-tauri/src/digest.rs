@@ -66,22 +66,6 @@ fn render_seg(seg: &NumberedSeg) -> String {
     }
 }
 
-/// 把解析 markdown 转成带段落编号的上下文（供引用锚定）
-///
-/// 注意：这是"取开头 N 字符"的简单模式，长论文会导致后半部分不可见，
-/// 拆解请使用 [`context_for_field`]。
-pub fn numbered_context(md: &str, cap_chars: usize) -> String {
-    let segs = number_segments(md);
-    let mut out = String::new();
-    for s in &segs {
-        out.push_str(&render_seg(s));
-        if out.chars().count() >= cap_chars {
-            break;
-        }
-    }
-    out
-}
-
 /// 从字段定义提取检索词：英文按非字母数字切词（取长度 ≥4），中文取 label 的 2 字滑窗
 fn field_terms(field: &FieldDef) -> Vec<String> {
     let mut terms: Vec<String> = Vec::new();
