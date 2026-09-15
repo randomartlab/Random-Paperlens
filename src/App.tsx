@@ -222,6 +222,28 @@ function App() {
     }
   };
 
+  // 清除某篇文献的处理缓存（解析 / 翻译 / 拆解产物），保留原始 PDF，可重新处理
+  const handleClearCache = async (doc: Doc) => {
+    const ok = await ask(
+      `将清除《${doc.title}》的解析、翻译与拆解产物（原始 PDF 保留）。\n\n清除后需要重新解析与拆解，确定继续？`,
+      { title: "清除处理缓存", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      const r = await invoke<{ cleared: string[] }>("clear_document_cache", {
+        docId: doc.id,
+      });
+      setNotice(
+        r.cleared.length > 0
+          ? `已清除《${doc.title}》的${r.cleared.join("、")}`
+          : `《${doc.title}》没有可清除的缓存`,
+      );
+      await refresh();
+    } catch (e) {
+      setNotice(String(e));
+    }
+  };
+
   const handleToggleRead = async (doc: Doc, next: "unread" | "read") => {
     try {
       await invoke("set_read_status", { docId: doc.id, readStatus: next });
@@ -852,6 +874,7 @@ function App() {
                       >
                         拆解
                       </button>
+                      <ClearCacheButton doc={d} onClick={() => handleClearCache(d)} />
                     </div>
                   ) : d.status === "translated" || d.status === "digested" ? (
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -876,6 +899,7 @@ function App() {
                           查看拆解
                         </button>
                       )}
+                      <ClearCacheButton doc={d} onClick={() => handleClearCache(d)} />
                     </div>
                   ) : null}
                 </div>
@@ -1200,6 +1224,19 @@ function App() {
       {/* 使用帮助弹窗 */}
       {showHelp && <HelpView onClose={() => setShowHelp(false)} />}
     </div>
+  );
+}
+
+/** 清除处理缓存按钮：把已解析/翻译/拆解的文献重置回可重新处理的状态 */
+function ClearCacheButton({ doc, onClick }: { doc: Doc; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={`清除《${doc.title}》的解析/翻译/拆解产物，可重新处理（保留原始 PDF）`}
+      className="rounded-lg border border-divider-strong px-2.5 py-1.5 text-xs text-primary/45 transition-colors hover:bg-hover hover:text-primary/75"
+    >
+      重置
+    </button>
   );
 }
 

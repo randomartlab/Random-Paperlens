@@ -32,6 +32,11 @@ use translate::{split_markdown, translate_batch, Translator, VisionConfig};
 static SESSION_MARKER: OnceLock<std::path::PathBuf> = OnceLock::new();
 static LAST_CRASH: AtomicBool = AtomicBool::new(false);
 
+/// 单个字段拆解时的上下文上限（字符）。
+/// 按字段检索选取后取该值，使长论文的方法/结果章节也进入上下文，
+/// 避免因"一律取开头 N 字符"导致模型只能输出"引用缺失"。
+const DIGEST_CONTEXT_CHARS: usize = 60000;
+
 /// 全局应用状态：数据库连接（互斥保护，供多命令共享）+ 翻译任务控制标志
 struct AppState {
     conn: Mutex<Connection>,
@@ -1179,7 +1184,9 @@ fn start_digest(
         }
 
         let title = input.title;
-        let context = digest::numbered_context(&md, 22000);
+        // 上下文按字段检索构造（见下方循环内 context_for_field）：
+        // 此前固定取开头 22000 字符，长论文后半部分对模型完全不可见
+        let segments = digest::number_segments(&md);
         let system = digest::build_system_prompt(&rec, &plan.combine_strategy, total);
         let translator = Translator {
             base_url,
@@ -1230,6 +1237,7 @@ fn start_digest(
                     "detail": detail
                 }),
             );
+            let context = digest::context_for_field(&segments, fld, DIGEST_CONTEXT_CHARS);
             let user = digest::build_field_user(fld, &context);
             match digest::digest_field(&translator, &system, &user, &fld.ftype) {
                 Ok((zh, en, table)) => {
@@ -2204,6 +2212,61 @@ fn set_read_status(
     Ok(())
 }
 
+/// 清除某文献的处理缓存（解析 / 翻译 / 拆解产物），使其可重新执行各阶段
+///
+/// 原始 PDF 保留；同时回退 status、清空语言识别结果，并清理该文献的任务与
+/// 拆解版本记录 —— 否则"最新拆解"仍会指向已删除的产物。
+#[tauri::command]
+fn clear_document_cache(
+    doc_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let doc_dir = data_dir.join("documents").join(&doc_id);
+    if !doc_dir.exists() {
+        return Err("文献数据目录不存在".into());
+    }
+
+    let mut cleared: Vec<String> = Vec::new();
+    for (sub, label) in [
+        ("parsed", "解析产物"),
+        ("translated", "翻译结果"),
+        ("digests", "拆解结果"),
+    ] {
+        let path = doc_dir.join(sub);
+        if path.exists() {
+            std::fs::remove_dir_all(&path).map_err(|e| format!("清除{label}失败: {e}"))?;
+            cleared.push(label.to_string());
+        }
+    }
+    let image_notes = doc_dir.join("images_analysis.json");
+    if image_notes.exists() {
+        let _ = std::fs::remove_file(&image_notes);
+        cleared.push("图片识别结果".to_string());
+    }
+
+    {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE documents SET status = 'pending', language = NULL, updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![chrono::Utc::now().to_rfc3339(), doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+        // 产物已删除，关联的任务与拆解版本一并清理，避免残留引用
+        let _ = conn.execute("DELETE FROM tasks WHERE doc_id = ?1", [&doc_id]);
+        let _ = conn.execute("DELETE FROM digest_versions WHERE doc_id = ?1", [&doc_id]);
+    }
+
+    let summary = if cleared.is_empty() {
+        "无缓存产物".to_string()
+    } else {
+        cleared.join("、")
+    };
+    logging::info(&format!("已清除文献处理缓存 doc={doc_id}：{summary}"));
+    Ok(json!({ "cleared": cleared }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // 子模块命令经 #[macro_use] 展开时触发 rustc 的 never-type fallback lint（宏展开噪音，非代码缺陷）
 #[allow(dependency_on_unit_never_type_fallback)]
@@ -2248,6 +2311,7 @@ pub fn run() {
             list_documents,
             import_document,
             set_read_status,
+            clear_document_cache,
             get_mineru_key,
             set_mineru_key,
             start_parse,

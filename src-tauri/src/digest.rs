@@ -25,23 +25,139 @@ pub struct DigestFieldResult {
     pub failed: bool,        // 该字段拆解失败（占位而非编造）
 }
 
-/// 把解析 markdown 转成带段落编号的上下文（供引用锚定）
-pub fn numbered_context(md: &str, cap_chars: usize) -> String {
-    let segs = crate::translate::split_markdown(md);
-    let mut out = String::new();
+/// 带编号的上下文条目（供按字段检索）
+pub struct NumberedSeg {
+    /// 正文段落编号；章节标题为 None
+    pub no: Option<usize>,
+    /// 章节标题文本（heading 时有效）
+    pub heading: Option<String>,
+    pub content: String,
+}
+
+/// 把解析 Markdown 拆成带编号的条目：正文段落递增编号，章节标题单独保留
+pub fn number_segments(md: &str) -> Vec<NumberedSeg> {
+    let mut out = Vec::new();
     let mut para_no = 0usize;
-    for s in segs {
-        if s.kind == "paragraph" {
-            para_no += 1;
-            out.push_str(&format!("[段落 {para_no}]\n{}\n\n", s.content));
-        } else if s.kind == "heading" {
-            out.push_str(&format!(
-                "【章节】{}\n\n",
-                s.content.trim_start_matches('#').trim()
-            ));
+    for s in crate::translate::split_markdown(md) {
+        match s.kind.as_str() {
+            "paragraph" => {
+                para_no += 1;
+                out.push(NumberedSeg {
+                    no: Some(para_no),
+                    heading: None,
+                    content: s.content,
+                });
+            }
+            "heading" => out.push(NumberedSeg {
+                no: None,
+                heading: Some(s.content.trim_start_matches('#').trim().to_string()),
+                content: String::new(),
+            }),
+            _ => {}
         }
+    }
+    out
+}
+
+fn render_seg(seg: &NumberedSeg) -> String {
+    match seg.no {
+        Some(n) => format!("[段落 {n}]\n{}\n\n", seg.content),
+        None => format!("【章节】{}\n\n", seg.heading.clone().unwrap_or_default()),
+    }
+}
+
+/// 把解析 markdown 转成带段落编号的上下文（供引用锚定）
+///
+/// 注意：这是"取开头 N 字符"的简单模式，长论文会导致后半部分不可见，
+/// 拆解请使用 [`context_for_field`]。
+pub fn numbered_context(md: &str, cap_chars: usize) -> String {
+    let segs = number_segments(md);
+    let mut out = String::new();
+    for s in &segs {
+        out.push_str(&render_seg(s));
         if out.chars().count() >= cap_chars {
             break;
+        }
+    }
+    out
+}
+
+/// 从字段定义提取检索词：英文按非字母数字切词（取长度 ≥4），中文取 label 的 2 字滑窗
+fn field_terms(field: &FieldDef) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for src in [field.name.as_str(), field.description.as_str()] {
+        for w in src.split(|c: char| !c.is_ascii_alphanumeric()) {
+            let w = w.trim().to_lowercase();
+            if w.chars().count() >= 4 {
+                terms.push(w);
+            }
+        }
+    }
+    let zh: Vec<char> = field
+        .label
+        .chars()
+        .filter(|c| !c.is_ascii() && !c.is_whitespace())
+        .collect();
+    if zh.len() >= 2 {
+        for w in zh.windows(2) {
+            terms.push(w.iter().collect());
+        }
+    }
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+/// 为单个字段挑选上下文
+///
+/// 关键词命中的段落优先入选（保证该字段能拿到对应原文），再按阅读顺序补足结构段落。
+/// 替代"一律取开头 N 字符"——那会让长论文的方法/结果段永远落在截断之外，
+/// 模型只能输出"引用缺失"。
+pub fn context_for_field(segs: &[NumberedSeg], field: &FieldDef, cap_chars: usize) -> String {
+    if segs.is_empty() {
+        return String::new();
+    }
+    let terms = field_terms(field);
+    let scores: Vec<usize> = segs
+        .iter()
+        .map(|s| {
+            let text = s.content.to_lowercase();
+            terms.iter().filter(|t| text.contains(t.as_str())).count()
+        })
+        .collect();
+
+    // 命中段落按得分降序，占上下文预算的 70%
+    let mut hit_idx: Vec<usize> = (0..segs.len()).filter(|&i| scores[i] > 0).collect();
+    hit_idx.sort_by_key(|&i| std::cmp::Reverse(scores[i]));
+
+    let mut chosen = vec![false; segs.len()];
+    let mut used = 0usize;
+    let hit_budget = cap_chars * 7 / 10;
+    for i in hit_idx {
+        let len = render_seg(&segs[i]).chars().count();
+        if used + len > hit_budget {
+            continue;
+        }
+        chosen[i] = true;
+        used += len;
+    }
+    // 补足：按阅读顺序填入章节标题与其余段落，保持结构完整
+    for i in 0..segs.len() {
+        if chosen[i] {
+            continue;
+        }
+        let len = render_seg(&segs[i]).chars().count();
+        if used + len > cap_chars {
+            continue;
+        }
+        chosen[i] = true;
+        used += len;
+    }
+
+    let mut out = String::new();
+    for (i, seg) in segs.iter().enumerate() {
+        if chosen[i] {
+            out.push_str(&render_seg(seg));
         }
     }
     out
@@ -228,4 +344,79 @@ pub fn digest_field(
         }
     }
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(name: &str, label: &str, desc: &str) -> FieldDef {
+        FieldDef {
+            name: name.into(),
+            label: label.into(),
+            ftype: "text".into(),
+            description: desc.into(),
+            required: false,
+            enum_values: Vec::new(),
+            source: "通用".into(),
+        }
+    }
+
+    /// 回归用例：字段相关段落在论文后段时，必须被检索进该字段的上下文。
+    ///
+    /// 旧实现固定取开头 22000 字符，长论文的方法/结果段落在截断之外，
+    /// 模型只能输出"引用缺失"——这正是实机测到的问题。
+    #[test]
+    fn field_context_reaches_tail_of_long_paper() {
+        let mut md = String::new();
+        for i in 1..=150 {
+            md.push_str(&format!("## Section {i}\n\n"));
+            if i == 140 {
+                md.push_str(
+                    "We report the main regression results with fixed effects and robust standard errors.\n\n",
+                );
+            } else {
+                md.push_str(&format!(
+                    "Filler paragraph {i} contains ordinary narrative content for padding.\n\n"
+                ));
+            }
+        }
+        let segs = number_segments(&md);
+        assert!(segs.len() > 100, "测试语料应产生足够多的段落");
+
+        let f = field("main_regression", "核心回归结果", "核心回归结果表");
+        let ctx = context_for_field(&segs, &f, 6000);
+
+        assert!(
+            ctx.contains("main regression results"),
+            "位于论文后段的字段相关段落应被检索进上下文，否则该字段只能报引用缺失"
+        );
+    }
+
+    /// 上下文预算须被遵守，避免把整篇论文塞进单次请求
+    #[test]
+    fn field_context_respects_budget() {
+        let mut md = String::new();
+        for i in 1..=300 {
+            md.push_str(&format!("Paragraph {i} text body.\n\n"));
+        }
+        let segs = number_segments(&md);
+        let f = field("dataset_name", "数据集名称", "使用的数据集名称");
+        let ctx = context_for_field(&segs, &f, 2000);
+        assert!(
+            ctx.chars().count() <= 2200,
+            "上下文不应超出预算，实际 {} 字符",
+            ctx.chars().count()
+        );
+    }
+
+    /// 段落编号需连续，引用锚定 [段落 N] 才有意义
+    #[test]
+    fn segment_numbering_is_sequential() {
+        let md = "## 1. Introduction\n\nFirst paragraph.\n\nSecond paragraph.\n\n## 2. Methods\n\nThird paragraph.\n\n";
+        let segs = number_segments(md);
+        let nos: Vec<usize> = segs.iter().filter_map(|s| s.no).collect();
+        assert_eq!(nos, vec![1, 2, 3]);
+        assert!(segs.iter().any(|s| s.heading.as_deref() == Some("2. Methods")));
+    }
 }
