@@ -985,6 +985,7 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
           <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs sm:grid-cols-3">
             <DiagItem label="平台 / 架构" value={`${diag.platform ?? "-"} / ${diag.arch ?? "-"}`} />
             <DiagItem label="应用版本" value={diag.version ?? "-"} />
+            <DiagItem label="运行位置" value={diag.exe_path ?? "-"} />
             <DiagItem
               label="文献数 / 失败任务"
               value={`${diag.document_count ?? 0} / ${diag.failed_task_count ?? 0}`}
@@ -1058,6 +1059,7 @@ type Diagnostics = {
   platform?: string;
   arch?: string;
   version?: string;
+  exe_path?: string;
   data_dir?: string | null;
   mineru_configured?: boolean;
   mineru_active?: boolean;
@@ -1069,12 +1071,14 @@ type Diagnostics = {
   error?: string;
 };
 
-/** 诊断项：标签 + 取值，未配置时以警示色提示 */
+/** 诊断项：标签 + 取值，未配置时以警示色提示；长值悬停可看全文 */
 function DiagItem({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
     <div className="flex min-w-0 flex-col">
       <span className="text-primary/45">{label}</span>
-      <span className={`truncate ${warn ? "text-warning-fg" : "text-primary/80"}`}>{value}</span>
+      <span className={`truncate ${warn ? "text-warning-fg" : "text-primary/80"}`} title={value}>
+        {value}
+      </span>
     </div>
   );
 }

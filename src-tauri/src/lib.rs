@@ -2103,6 +2103,11 @@ fn get_diagnostics(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> 
         "platform": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "version": env!("CARGO_PKG_VERSION"),
+        // 当前运行的可执行文件路径：用于确认"实际在跑哪一份安装"，
+        // 排查多副本残留、替换未生效等版本问题
+        "exe_path": std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
         "data_dir": data_dir,
         "log_path": log_path,
         "last_crash": LAST_CRASH.load(Ordering::Relaxed),
@@ -2291,7 +2296,13 @@ pub fn run() {
                 LAST_CRASH.store(true, Ordering::Relaxed);
                 logging::warn("检测到上次异常退出（session.lock 残留），未完成任务需重新执行");
             } else {
-                logging::info("应用正常启动");
+                // 启动即记录版本与平台：便于事后确认某次运行究竟跑的是哪个构建
+                logging::info(&format!(
+                    "应用正常启动 v{}（{} / {}）",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ));
             }
             let _ = std::fs::write(&marker, format!("pid={}\n", std::process::id()));
             let _ = SESSION_MARKER.set(marker);

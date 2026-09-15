@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
@@ -156,6 +157,14 @@ const showTranslateErrorDialog = (err: TranslateErrorInfo) => {
 
 function App() {
   const [docs, setDocs] = useState<Doc[]>([]);
+  // 真实运行版本：从应用元数据读取。此前硬编码 "v0.3.1"，
+  // 换版本后界面永远显示同一个号，无法确认实际在跑哪一份构建
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(""));
+  }, []);
   const [readFilter, setReadFilter] = useState<"all" | "unread" | "read">("all");
   const [hasApi, setHasApi] = useState(true);
   const [loadingLib, setLoadingLib] = useState(true);
@@ -548,8 +557,11 @@ function App() {
           <h1 className="text-[15px] font-semibold tracking-tight">
             Rd学术阅读器
           </h1>
-          <span className="rounded-full bg-primary/5 px-2.5 py-0.5 text-xs text-primary/60">
-            v0.3.1
+          <span
+            className="rounded-full bg-primary/5 px-2.5 py-0.5 text-xs text-primary/60"
+            title="当前运行版本（取自应用元数据，非硬编码）"
+          >
+            v{appVersion || "…"}
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-primary/50">
