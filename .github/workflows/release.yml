@@ -70,10 +70,10 @@ jobs:
           mkdir -p out
           V=$(node -p "require('./package.json').version")
           D="src-tauri/target/${{ matrix.target }}/release/bundle"
-          cp "$D"/dmg/*.dmg "out/litdesk_${V}_${{ matrix.arch }}.dmg"
+          cp "$D"/dmg/*.dmg "out/Rd-Paperlens_${V}_${{ matrix.arch }}.dmg"
           # 更新产物的落盘路径随 Tauri 版本有差异，用 find 定位更稳
-          find "$D" -name "*.app.tar.gz" -exec cp {} "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz" \;
-          find "$D" -name "*.app.tar.gz.sig" -exec cp {} "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz.sig" \;
+          find "$D" -name "*.app.tar.gz" -exec cp {} "out/Rd-Paperlens_${V}_${{ matrix.arch }}.app.tar.gz" \;
+          find "$D" -name "*.app.tar.gz.sig" -exec cp {} "out/Rd-Paperlens_${V}_${{ matrix.arch }}.app.tar.gz.sig" \;
           ls -lh out
 
       - name: 上传产物
@@ -132,8 +132,8 @@ jobs:
           mkdir -p out
           V=$(node -p "require('./package.json').version")
           D="src-tauri/target/release/bundle/nsis"
-          cp "$D"/*-setup.exe "out/litdesk_${V}_x64-setup.exe"
-          cp "$D"/*-setup.exe.sig "out/litdesk_${V}_x64-setup.exe.sig"
+          cp "$D"/*-setup.exe "out/Rd-Paperlens_${V}_x64-setup.exe"
+          cp "$D"/*-setup.exe.sig "out/Rd-Paperlens_${V}_x64-setup.exe.sig"
           ls -lh out
 
       - name: 上传产物

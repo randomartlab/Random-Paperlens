@@ -182,7 +182,8 @@ function HelpView({ onClose }: Props) {
                 <div className="text-sm font-medium">视觉模型</div>
                 <div className="mt-1 text-[11px] leading-relaxed text-primary/45">可选，独立配置</div>
                 <div className="mt-2 text-xs leading-relaxed text-primary/55">
-                  用于图注 / 图片内容识别。免费方案推荐 GLM-4.6V-Flash，不配置则跳过图片识别。
+                  用于图注 / 图片内容识别。<span className="font-medium text-primary/70">若主模型本身支持视觉会自动复用，无需另配</span>；主模型是纯文本模型时才需单独填写（免费方案推荐
+                  GLM-4.6V-Flash），否则跳过图片识别，不影响解析、翻译与拆解。
                 </div>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">
@@ -223,7 +224,39 @@ function HelpView({ onClose }: Props) {
                   顶栏按钮切换浅色 / 深色；设置 → 主题外观可选五套主题，偏好会记住。
                 </p>
               </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">单击复制</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  双语视图与原文视图里，鼠标指向某句会高亮，单击即复制该句（双语会连对应译文一起复制）；拆解栏单击整条复制。若你正在拖选文字，则不会触发复制，选取照常可用。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">添加到笔记</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  选中文本后右键「添加到笔记」：首次会按「月-日-题目-一作-年份-阅读笔记」新建笔记，之后同一篇文献再添加就追加到同一份笔记末尾。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">按需导出</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  导出前可选内容范围：中文译文 / 双语对照 / 拆解结果 / 除原文外全部 / 全部内容；格式支持 Markdown、HTML（图片内嵌、可离线打开）与 PDF。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">重置与更新</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  文献卡片的「重置」可清除该篇的解析 / 翻译 / 拆解产物（原始 PDF 保留）以便重跑；「设置 → 软件更新」可手动检查新版本，确认后下载、重启生效。
+                </p>
+              </div>
             </div>
+          </section>
+
+          {/* 篇幅提醒 */}
+          <section className="mb-4">
+            <SectionTitle title="关于篇幅：适合单篇论文" />
+            <p className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2 text-[11px] leading-relaxed text-warning-fg">
+              翻译与拆解都是<span className="font-medium">全量处理</span>：翻译按段落逐段调用，拆解按字段逐个请求。token 消耗随篇幅增长很快——请勿导入专著、论文集或上百页的学位论文，一次全量处理可能吃掉可观额度。超长文档建议拆成几份分别导入。
+            </p>
           </section>
         </div>
       </div>
