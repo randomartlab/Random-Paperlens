@@ -21,7 +21,7 @@ pub fn notes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// 过滤两平台非法字符的并集：Windows 为 `\ / : * ? " < > |`，macOS 为 `: /`；
 /// 同时剔除控制字符与结尾的点/空格，并规避 Windows 保留设备名 ——
 /// 否则用户在笔记名里输入 `*` `?` 等字符时，Windows 上写文件会直接失败（macOS 无此限制）。
-fn sanitize_name(name: &str) -> String {
+pub(crate) fn sanitize_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .filter(|c| {

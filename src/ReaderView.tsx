@@ -480,6 +480,120 @@ function SentencePair({
 /** 双语段落记忆化：翻译进度事件频繁触发时避免整段重渲染 */
 const SentencePairMemo = memo(SentencePair);
 
+/**
+ * 把解析 Markdown 切成「可交互段落」与「原样块」。
+ *
+ * 普通段落按句拆分，以便悬停高亮与单击复制；
+ * 标题、表格、代码块、图片、引用保持 Markdown 原样渲染，避免破坏结构
+ * （公式、表格若被逐句拆开会散架）。
+ */
+function splitInteractiveBlocks(md: string): { interactive: boolean; text: string }[] {
+  const blocks: { interactive: boolean; text: string }[] = [];
+  const lines = md.split("\n");
+  let buf: string[] = [];
+  let interactive = false;
+  let inCode = false;
+
+  const flush = () => {
+    const text = buf.join("\n").trim();
+    if (text) blocks.push({ interactive, text });
+    buf = [];
+  };
+
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.startsWith("```")) {
+      if (inCode) {
+        buf.push(line);
+        inCode = false;
+        flush();
+      } else {
+        flush();
+        interactive = false;
+        inCode = true;
+        buf.push(line);
+      }
+      continue;
+    }
+    if (inCode) {
+      buf.push(line);
+      continue;
+    }
+    if (!t) {
+      flush();
+      continue;
+    }
+    // 结构块：标题 / 表格行 / 图片 / 引用
+    const isBlock =
+      /^#{1,6}\s/.test(t) || t.startsWith("|") || t.startsWith("![") || t.startsWith("> ");
+    const want = !isBlock;
+    if (buf.length && want !== interactive) flush();
+    interactive = want;
+    buf.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+/** 原文视图的逐句交互渲染：段落内每句可悬停高亮、单击复制 */
+function MarkdownSentences({
+  content,
+  baseDir,
+  imgNotes,
+  onCopy,
+}: {
+  content: string;
+  baseDir: string;
+  imgNotes?: Record<string, string>;
+  onCopy?: (text: string, x: number, y: number) => void;
+}) {
+  const [hover, setHover] = useState<string | null>(null);
+  const blocks = useMemo(() => splitInteractiveBlocks(content), [content]);
+
+  return (
+    <>
+      {blocks.map((b, i) => {
+        if (!b.interactive) {
+          return (
+            <div key={i}>
+              <MarkdownBodyMemo content={b.text} baseDir={baseDir} imgNotes={imgNotes} />
+            </div>
+          );
+        }
+        const sents = splitSentences(b.text);
+        return (
+          <p key={i}>
+            {sents.map((s, j) => {
+              const key = `${i}-${j}`;
+              return (
+                <span
+                  key={j}
+                  onMouseEnter={() => setHover(key)}
+                  onMouseLeave={() => setHover(null)}
+                  onClick={(e) => {
+                    // 有选区时让位给手动选取，不触发复制
+                    if (hasTextSelection()) return;
+                    onCopy?.(s, e.clientX, e.clientY);
+                  }}
+                  title="单击复制该句"
+                  className={`cursor-pointer rounded px-0.5 transition-colors ${
+                    hover === key ? "bg-mark" : ""
+                  }`}
+                >
+                  <InlineMarkdown content={s} />
+                  {j < sents.length - 1 ? " " : ""}
+                </span>
+              );
+            })}
+          </p>
+        );
+      })}
+    </>
+  );
+}
+
+const MarkdownSentencesMemo = memo(MarkdownSentences);
+
 /** 阅读视图：原文 / 译文 / 双语对照 / 拆解（双语） */
 function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   const [mode, setMode] = useState<Mode>(initialMode ?? "original");
@@ -494,6 +608,16 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   const [imgNotes, setImgNotes] = useState<Record<string, string>>({});
   const [digest, setDigest] = useState<DigestRecord | null>(null);
   const [digestLoading, setDigestLoading] = useState(false);
+  // 拆解/识别任务运行中：进入拆解栏时显示实时进度，而不是「暂无拆解结果」这类误导提示
+  const [digestRun, setDigestRun] = useState<{
+    stage: string;
+    detail: string;
+    progress: number;
+  } | null>(null);
+  // 解析任务运行中：原文栏同理
+  const [parseRun, setParseRun] = useState<{ stage: string; detail: string } | null>(null);
+  // 拆解完成事件到达后自增，用于重新拉取拆解结果
+  const [digestReload, setDigestReload] = useState(0);
   const [digestError, setDigestError] = useState<string | null>(null);
   const [digestVersions, setDigestVersions] = useState<{ version: number; created_at: string }[]>([]);
   const [editing, setEditing] = useState(false);
@@ -515,7 +639,9 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   // F8 摘录：自定义右键菜单（选中文本时出现）
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; text: string } | null>(null);
   // 单击复制的就地反馈：记录鼠标位置，短暂显示「已复制」
-  const [copyToast, setCopyToast] = useState<{ x: number; y: number } | null>(null);
+  const [copyToast, setCopyToast] = useState<{ x: number; y: number; label?: string } | null>(
+    null,
+  );
   const copyToastTimer = useRef<number | null>(null);
   // 拆解栏当前悬停的条目（整条高亮，提示可整条复制）
   const [hoverField, setHoverField] = useState<number | null>(null);
@@ -531,6 +657,32 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     if (copyToastTimer.current !== null) window.clearTimeout(copyToastTimer.current);
     copyToastTimer.current = window.setTimeout(() => setCopyToast(null), 900);
   }, []);
+
+  /** 就地反馈的统一出口：在鼠标位置短暂显示一行提示 */
+  const flashToast = useCallback((label: string, x: number, y: number) => {
+    setCopyToast({ x, y, label });
+    if (copyToastTimer.current !== null) window.clearTimeout(copyToastTimer.current);
+    copyToastTimer.current = window.setTimeout(() => setCopyToast(null), 1400);
+  }, []);
+
+  /**
+   * 把选中的文本加入该文献对应的笔记。
+   * 首次会按命名规则新建笔记并建立关联，之后追加到同一份笔记末尾。
+   */
+  const addToNote = async (x: number, y: number) => {
+    if (!ctxMenu) return;
+    const excerpt = `> ${ctxMenu.text.replace(/\n+/g, "\n> ")}\n> ——《${title ?? "文献"}》`;
+    setCtxMenu(null);
+    try {
+      const r = await invoke<{ note_name: string; created: boolean }>("append_to_note", {
+        docId,
+        text: excerpt,
+      });
+      flashToast(r.created ? "已新建笔记" : "已追加到笔记", x, y);
+    } catch (e) {
+      flashToast(`添加失败：${String(e)}`, x, y);
+    }
+  };
 
   const handleCtx = (e: React.MouseEvent) => {
     const sel = window.getSelection()?.toString().trim();
@@ -619,7 +771,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [mode, docId]);
+  }, [mode, docId, digestReload]);
 
   // 拆解：切换查看指定版本
   const loadDigestVersion = async (version: number) => {
@@ -788,6 +940,38 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     });
     register<{ doc_id: string }>("translate-failed", (p) => {
       if (p.doc_id === docId) setTranslatingNow(false);
+    });
+    // 解析进度：让原文栏在任务进行中显示状态，而不是空白或报错
+    register<{ doc_id: string; stage: string; progress: number; detail?: string }>(
+      "parse-progress",
+      (p) => {
+        if (p.doc_id !== docId) return;
+        setParseRun({ stage: p.stage, detail: p.detail ?? "" });
+      },
+    );
+    register<{ doc_id: string }>("parse-done", (p) => {
+      if (p.doc_id === docId) setParseRun(null);
+    });
+    register<{ doc_id: string }>("parse-failed", (p) => {
+      if (p.doc_id === docId) setParseRun(null);
+    });
+    // 拆解进度（含范式识别阶段）：进入拆解栏时应看到实时阶段，而不是「暂无拆解结果」
+    register<{ doc_id: string; stage: string; progress: number; detail?: string }>(
+      "digest-progress",
+      (p) => {
+        if (p.doc_id !== docId) return;
+        setDigestRun({ stage: p.stage, detail: p.detail ?? "", progress: p.progress });
+      },
+    );
+    register<{ doc_id: string }>("digest-done", (p) => {
+      if (p.doc_id !== docId) return;
+      setDigestRun(null);
+      setDigestReload((n) => n + 1); // 结果就绪，重新拉取
+    });
+    register<{ doc_id: string }>("digest-failed", (p) => {
+      if (p.doc_id !== docId) return;
+      setDigestRun(null);
+      setDigestReload((n) => n + 1);
     });
     return () => {
       unlisteners.forEach((fn) => fn());
@@ -1021,6 +1205,23 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
               <span className="spinner" />
               加载拆解结果…
             </div>
+          ) : digestRun ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3">
+              <span className="spinner" />
+              <div className="text-sm text-primary/60">
+                {digestRun.stage || "处理中"}
+                {digestRun.detail ? ` · ${digestRun.detail}` : ""}
+              </div>
+              <div className="h-1.5 w-64 overflow-hidden rounded-full bg-track">
+                <div
+                  className="h-full bg-violet-500/70 transition-all"
+                  style={{ width: `${Math.round((digestRun.progress || 0) * 100)}%` }}
+                />
+              </div>
+              <div className="text-[11px] text-primary/40">
+                完成后结果会自动出现，期间可先看原文或译文
+              </div>
+            </div>
           ) : digestError ? (
             <div className="flex h-full items-center justify-center">
               <div className="anim-fade-in rounded-lg border border-danger-border bg-danger-bg px-4 py-2.5 text-sm text-danger-fg">
@@ -1028,7 +1229,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
               </div>
             </div>
           ) : digest ? (
-            <div className="mx-auto max-w-5xl px-8 py-8">
+            <div className="mx-auto max-w-5xl px-8 py-8" onContextMenu={handleCtx}>
               {/* 版本工具栏：版本切换 / 在线编辑 / 回滚 */}
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-violet-600 px-2.5 py-0.5 text-xs font-medium text-white">
@@ -1221,7 +1422,16 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
             </div>
           )
         ) : mode === "original" ? (
-          content.trim() === "" ? (
+          parseRun ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3">
+              <span className="spinner" />
+              <div className="text-sm text-primary/60">
+                解析中 · {parseRun.stage}
+                {parseRun.detail ? ` · ${parseRun.detail}` : ""}
+              </div>
+              <div className="text-[11px] text-primary/40">完成后原文会自动显示</div>
+            </div>
+          ) : content.trim() === "" ? (
             <div className="flex h-full items-center justify-center text-sm text-primary/45">
               暂无原文内容
             </div>
@@ -1230,7 +1440,12 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
               className="prose prose-slate mx-auto max-w-3xl px-8 py-8 prose-headings:tracking-tight prose-a:text-blue-700"
               onContextMenu={handleCtx}
             >
-              <MarkdownBodyMemo content={originalInjected} baseDir={baseDir} imgNotes={imgNotes} />
+              <MarkdownSentencesMemo
+                content={originalInjected}
+                baseDir={baseDir}
+                imgNotes={imgNotes}
+                onCopy={copyWithFeedback}
+              />
             </div>
           )
         ) : transState === "loading" ? (
@@ -1262,7 +1477,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
             </div>
           )
         ) : (
-          <div className="mx-auto max-w-5xl px-8 py-8">
+          <div className="mx-auto max-w-5xl px-8 py-8" onContextMenu={handleCtx}>
             <div className="mb-3 grid grid-cols-2 gap-6 text-xs font-medium text-primary/45">
               <div>原文</div>
               <div>译文</div>
@@ -1323,7 +1538,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
           className="anim-fade-in pointer-events-none fixed z-50 rounded-md bg-primary/90 px-2 py-0.5 text-[11px] font-medium text-primary-inverse shadow-lg"
           style={{ left: copyToast.x + 10, top: copyToast.y + 14 }}
         >
-          已复制
+          {copyToast.label ?? "已复制"}
         </div>
       )}
       {/* F8 摘录右键菜单（选中文本时出现） */}
@@ -1346,6 +1561,12 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
               className="block w-full px-3 py-1.5 text-left text-xs text-primary/75 hover:bg-hover"
             >
               复制为摘录（含来源）
+            </button>
+            <button
+              onClick={() => void addToNote(ctxMenu.x, ctxMenu.y)}
+              className="block w-full px-3 py-1.5 text-left text-xs text-primary/75 hover:bg-hover"
+            >
+              添加到笔记
             </button>
             <button
               onClick={() => setCtxMenu(null)}

@@ -109,6 +109,15 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         )?;
     }
 
+    if version < 6 {
+        // 文献对应的笔记文件名：首次「添加到笔记」时按命名规则生成并记录，
+        // 之后同一篇文献再添加就追加到同一份笔记（命名含日期，不能靠名字反查）
+        conn.execute_batch(
+            "ALTER TABLE documents ADD COLUMN note_name TEXT;
+             PRAGMA user_version = 6;",
+        )?;
+    }
+
     Ok(())
 }
 

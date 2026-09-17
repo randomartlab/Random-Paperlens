@@ -2272,6 +2272,105 @@ fn clear_document_cache(
     Ok(json!({ "cleared": cleared }))
 }
 
+/// 生成笔记名：月-日-论文题目-一作-发表年份-阅读笔记（缺失项自动跳过）
+fn build_note_name(title: &str, authors: Option<&str>, year: Option<i64>) -> String {
+    let mut parts: Vec<String> = vec![chrono::Local::now().format("%m-%d").to_string()];
+    let t = title.trim();
+    if !t.is_empty() {
+        parts.push(t.to_string());
+    }
+    if let Some(a) = authors {
+        let first = a
+            .split([',', ';', '，', '；', '、'])
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !first.is_empty() {
+            parts.push(first.to_string());
+        }
+    }
+    if let Some(y) = year {
+        parts.push(y.to_string());
+    }
+    parts.push("阅读笔记".to_string());
+    parts.join("-")
+}
+
+/// 把一段文本添加到该文献对应的笔记
+///
+/// 首次添加时按命名规则新建笔记并把关联记入 documents.note_name；
+/// 之后同一篇文献再添加就追加到同一份笔记末尾。
+/// 关联必须持久化——笔记名含日期，无法靠文件名反查是否同一篇文献。
+#[tauri::command]
+fn append_to_note(
+    doc_id: String,
+    text: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let body = text.trim().to_string();
+    if body.is_empty() {
+        return Err("没有可添加的内容".into());
+    }
+
+    // 1. 读取既有笔记名与该文献元数据（首次命名需要标题/一作/年份）
+    let (existing, title, authors, year) = {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT COALESCE(note_name, ''), title, authors, year FROM documents WHERE id = ?1",
+            [&doc_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .map_err(|e| format!("文献不存在: {e}"))?
+    };
+
+    let first_time = existing.trim().is_empty();
+    let note_name = if first_time {
+        build_note_name(&title, authors.as_deref(), year)
+    } else {
+        existing
+    };
+
+    // 2. 首次建文件（带标题），之后追加
+    let dir = notes::notes_dir(&app)?;
+    let path = dir.join(format!("{}.md", notes::sanitize_name(&note_name)));
+    if !path.exists() {
+        let content = format!("# {note_name}\n\n{body}\n");
+        std::fs::write(&path, content).map_err(|e| format!("创建笔记失败: {e}"))?;
+    } else {
+        let mut content =
+            std::fs::read_to_string(&path).map_err(|e| format!("读取笔记失败: {e}"))?;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!("\n---\n\n{body}\n"));
+        std::fs::write(&path, content).map_err(|e| format!("写入笔记失败: {e}"))?;
+    }
+
+    // 3. 首次添加时记录关联，供后续追加定位
+    if first_time {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE documents SET note_name = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![note_name, chrono::Utc::now().to_rfc3339(), doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    logging::info(&format!(
+        "添加到笔记 doc={doc_id} note={note_name}{}",
+        if first_time { "（新建）" } else { "（追加）" }
+    ));
+    Ok(json!({ "note_name": note_name, "created": first_time }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // 子模块命令经 #[macro_use] 展开时触发 rustc 的 never-type fallback lint（宏展开噪音，非代码缺陷）
 #[allow(dependency_on_unit_never_type_fallback)]
@@ -2325,6 +2424,7 @@ pub fn run() {
             import_document,
             set_read_status,
             clear_document_cache,
+            append_to_note,
             get_mineru_key,
             set_mineru_key,
             start_parse,
