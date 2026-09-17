@@ -5,7 +5,6 @@ import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import logo from "./assets/logo.png";
-import neonBg from "./assets/themes/neon.jpg";
 import twilightBg from "./assets/themes/twilight.jpg";
 import amberBg from "./assets/themes/amber.jpg";
 import ReaderView from "./ReaderView";
@@ -34,14 +33,12 @@ export type ThemePreset =
   | "dracula"
   | "blue-topaz"
   | "catppuccin"
-  | "neon"
   | "twilight"
   | "amber";
 
 /** 带主页氛围的主题：id → 本页背景图。
  *  氛围层只铺在文献库（列表）页，阅读/笔记/设置等栏目仅继承色调 token。 */
 const AMBIENT_THEMES: Partial<Record<ThemePreset, string>> = {
-  neon: neonBg,
   twilight: twilightBg,
   amber: amberBg,
 };
@@ -52,7 +49,6 @@ const THEME_PRESETS: { id: ThemePreset; name: string }[] = [
   { id: "dracula", name: "Dracula" },
   { id: "blue-topaz", name: "Blue Topaz" },
   { id: "catppuccin", name: "Catppuccin" },
-  { id: "neon", name: "Neon" },
   { id: "twilight", name: "Twilight" },
   { id: "amber", name: "Amber" },
 ];

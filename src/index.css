@@ -374,7 +374,10 @@ html.theme-transition *::after {
    data-theme="dracula"      Dracula（Day/Night）
    data-theme="blue-topaz"   Blue Topaz
    data-theme="catppuccin"   AnuPpuccin（Latte/Mocha）
-   每套都包含浅色 :root[data-theme] 与深色 .dark[data-theme] 两组 token。 */
+   每套都包含浅色 :root[data-theme] 与深色 .dark[data-theme] 两组 token。
+
+   另有两套 "带氛围图" 主题（twilight / amber）：除 token 外在文献库
+   列表页铺一张背景图，阅读/笔记/设置等栏目只继承色调。 */
 
 /* ---- Minimal ---- */
 :root[data-theme="minimal"] {
@@ -718,112 +721,6 @@ html.theme-transition *::after {
   --color-prose-border: rgba(198, 208, 245, 0.2);
   --color-hljs-bg: #181825;
   --color-hljs-fg: #c6d0f5;
-}
-
-/* ---- Neon（赛博深蓝紫；深色为主，浅色为降饱和版本）---- */
-:root[data-theme="neon"] {
-  color-scheme: light;
-
-  --color-canvas: #eef5ff;
-  --color-panel: #ffffff;
-  --color-surface: #f6faff;
-  --color-hover: rgba(30, 90, 180, 0.06);
-  --color-track: rgba(30, 90, 180, 0.07);
-  --color-primary: #0f2244;
-  --color-primary-inverse: #ffffff;
-  --color-divider: rgba(30, 90, 180, 0.1);
-  --color-divider-strong: rgba(30, 90, 180, 0.18);
-  --color-divider-bold: rgba(30, 90, 180, 0.32);
-
-  --color-info-bg: rgba(30, 111, 217, 0.1);
-  --color-info-fg: #1e6fd9;
-  --color-info-border: rgba(30, 111, 217, 0.24);
-  --color-success-bg: rgba(13, 148, 136, 0.1);
-  --color-success-fg: #0d9488;
-  --color-success-border: rgba(13, 148, 136, 0.24);
-  --color-warning-bg: rgba(202, 138, 4, 0.12);
-  --color-warning-fg: #b45309;
-  --color-warning-border: rgba(202, 138, 4, 0.26);
-  --color-danger-bg: rgba(219, 39, 119, 0.1);
-  --color-danger-fg: #db2777;
-  --color-danger-border: rgba(219, 39, 119, 0.24);
-  --color-mark: rgba(30, 111, 217, 0.18);
-
-  --color-brand: #1e6fd9;
-  --color-brand-strong: #1557b0;
-  --color-brand-soft: rgba(30, 111, 217, 0.1);
-  --color-brand-hover: rgba(30, 111, 217, 0.16);
-  --color-brand-border: rgba(30, 111, 217, 0.28);
-  --color-prose-body: #24365c;
-  --color-prose-heading: #0f2244;
-  --color-prose-muted: #5b7099;
-  --color-prose-link: #1e6fd9;
-  --color-prose-code: #0f2244;
-  --color-prose-border: rgba(30, 90, 180, 0.18);
-  --color-hljs-bg: #f2f7ff;
-  --color-hljs-fg: #24365c;
-}
-
-.dark[data-theme="neon"] {
-  color-scheme: dark;
-
-  --color-canvas: #0a1428;
-  --color-panel: #101c38;
-  --color-surface: #13203f;
-  --color-hover: rgba(94, 200, 255, 0.08);
-  --color-track: rgba(94, 200, 255, 0.1);
-  --color-primary: #e6f2ff;
-  --color-primary-inverse: #0a1428;
-  --color-divider: rgba(120, 190, 255, 0.12);
-  --color-divider-strong: rgba(120, 190, 255, 0.2);
-  --color-divider-bold: rgba(120, 190, 255, 0.34);
-
-  --color-info-bg: rgba(77, 184, 255, 0.16);
-  --color-info-fg: #6ec8ff;
-  --color-info-border: rgba(77, 184, 255, 0.32);
-  --color-success-bg: rgba(46, 230, 214, 0.16);
-  --color-success-fg: #2ee6d6;
-  --color-success-border: rgba(46, 230, 214, 0.32);
-  --color-warning-bg: rgba(255, 200, 100, 0.16);
-  --color-warning-fg: #ffc864;
-  --color-warning-border: rgba(255, 200, 100, 0.32);
-  --color-danger-bg: rgba(255, 90, 130, 0.16);
-  --color-danger-fg: #ff5a82;
-  --color-danger-border: rgba(255, 90, 130, 0.32);
-  --color-mark: rgba(110, 200, 255, 0.3);
-
-  --color-brand: #5cc8ff;
-  --color-brand-strong: #8fdcff;
-  --color-brand-soft: rgba(92, 200, 255, 0.16);
-  --color-brand-hover: rgba(92, 200, 255, 0.26);
-  --color-brand-border: rgba(92, 200, 255, 0.36);
-  --color-prose-body: #cfe2f5;
-  --color-prose-heading: #eef6ff;
-  --color-prose-muted: #8aa4c4;
-  --color-prose-link: #7dd3fc;
-  --color-prose-code: #d8ecff;
-  --color-prose-border: rgba(120, 190, 255, 0.22);
-  --color-hljs-bg: #0e1a33;
-  --color-hljs-fg: #d8ecff;
-}
-
-/* Neon 的主页氛围层：只用于文献列表页，其它页面仅继承上面的色调 token。
-   用渐变光斑 + 细网格模拟参考图的数据流质感，不引入任何大图。 */
-.neon-aurora {
-  background:
-    radial-gradient(1100px 520px at 12% -10%, rgba(92, 200, 255, 0.22), transparent 60%),
-    radial-gradient(900px 480px at 88% 0%, rgba(168, 85, 247, 0.22), transparent 62%),
-    radial-gradient(1200px 620px at 50% 110%, rgba(46, 230, 214, 0.14), transparent 60%),
-    linear-gradient(165deg, #0a1428 0%, #101f42 45%, #0b1830 100%);
-}
-
-.neon-grid {
-  background-image:
-    linear-gradient(rgba(120, 190, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(120, 190, 255, 0.07) 1px, transparent 1px);
-  background-size: 44px 44px, 44px 44px;
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 78%);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 78%);
 }
 
 /* ---- Twilight（深紫暮色 + 银白）---- */

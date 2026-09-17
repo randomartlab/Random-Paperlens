@@ -207,6 +207,18 @@ function HelpView({ onClose }: Props) {
                 </p>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">双击直达原文</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  在文献库里<span className="font-medium text-primary/70">双击</span>任一卡片，直接打开该篇的原文视图，跳过译文与拆解；单击仍是常规打开。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">引用跳转</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  正文里的 [1]、[2,3] 这类引用标记可点击，直接跳到文末参考文献的对应条目，核对出处不用手动翻。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
                 <div className="text-sm font-medium">阅读状态标记</div>
                 <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
                   文献卡片上的「未读 / 已读」开关，按状态筛选文献列表。
@@ -219,9 +231,11 @@ function HelpView({ onClose }: Props) {
                 </p>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">
-                <div className="text-sm font-medium">主题切换</div>
+                <div className="text-sm font-medium">主题外观</div>
                 <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
-                  顶栏按钮切换浅色 / 深色；设置 → 主题外观可选五套主题，偏好会记住。
+                  顶栏按钮切换浅色 / 深色；「设置 → 主题外观」可选七套主题，偏好会记住。其中
+                  <span className="font-medium text-primary/70">Twilight / Amber 带主页氛围图</span>
+                  ：文献库（列表）页整页铺氛围层、顶栏与导航吃氛围色，点进去的阅读、笔记、设置等栏目只继承色调。
                 </p>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">
@@ -234,6 +248,18 @@ function HelpView({ onClose }: Props) {
                 <div className="text-sm font-medium">添加到笔记</div>
                 <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
                   选中文本后右键「添加到笔记」：首次会按「月-日-题目-一作-年份-阅读笔记」新建笔记，之后同一篇文献再添加就追加到同一份笔记末尾。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">笔记管理</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  「笔记」页可浏览、编辑、重命名、批量删除与跨笔记查找替换。笔记是本地 Markdown 文件，也可单篇或批量导出为 Markdown / HTML / PDF。
+                </p>
+              </div>
+              <div className="rounded-xl border border-divider bg-panel p-4">
+                <div className="text-sm font-medium">任务中心</div>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  正在解析 / 翻译 / 拆解的文献都会在「任务中心」显示进度与状态，长文处理时不必盯着某一页等结果。
                 </p>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">
