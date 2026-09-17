@@ -186,11 +186,13 @@ function addCitationLinks(md: string): string {
   let inRefs = false;
   const withAnchors = lines.map((line) => {
     const t = line.trim();
-    // 参考文献章节标题（英/中）
+    // 参考文献章节标题（英/中）：先剥掉 # 与 ** 标记再判断，
+    // 否则 `## References` 这类常见写法永远匹配不上，整段参考文献都不会有锚点
+    const plain = t.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim();
     if (
       inRefs === false &&
-      t.length < 30 &&
-      /^(References|REFERENCES|Reference|Bibliography|参考文献|引用文献)\s*$/.test(t)
+      plain.length < 30 &&
+      /^(References|REFERENCES|Reference|Bibliography|参考文献|引用文献)$/i.test(plain)
     ) {
       inRefs = true;
       return line;
@@ -205,8 +207,10 @@ function addCitationLinks(md: string): string {
   });
 
   // 文中引用 → 锚点链接（限 ≤8 个编号，避免误伤长编号列表）
+  // 负向断言 `(?!\()`：跳过已经是链接的 [n](...) 形式，
+  // 否则会命中 MinerU 已生成脚注链接里的 [n]，替换出 [n](#ref-n)(#ref1) 这类畸形结果
   const linked = withAnchors.join("\n").replace(
-    /\[(\d+(?:[\s,，\-–—]\s*\d+){0,7})\]/g,
+    /\[(\d+(?:[\s,，\-–—]\s*\d+){0,7})\](?!\()/g,
     (match, body: string) => {
       const nums = body
         .split(/[\s,，\-–—]+/)

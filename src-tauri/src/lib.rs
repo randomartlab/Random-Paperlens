@@ -1544,10 +1544,44 @@ fn persist_digest_version(
     })
 }
 
-/// 将拆解字段集渲染为 Markdown（digest_vN.md）
+/// 清理字段文本中可能残留的 JSON 外壳。
+///
+/// 模型偶尔直接吐 JSON（或解析失败时被整体兜底进 zh/en），
+/// 直接导出会把这层结构原样带进文件，这里把它剥掉。
+fn clean_field_text(raw: &str) -> String {
+    let t = raw.trim();
+    if t.starts_with('{') && t.contains("\"zh\"") {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+            if let Some(s) = v["zh"].as_str() {
+                return s.trim().to_string();
+            }
+        }
+    }
+    t.trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string()
+}
+
+/// 该字段是否跳过导出：解析失败、内容为空，或明确标注引用缺失
+///
+/// 用户的要求是「无引用的条目直接不导出」——留着占位反而干扰阅读。
+fn field_should_skip(f: &digest::DigestFieldResult) -> bool {
+    if f.failed {
+        return true;
+    }
+    let zh = f.zh.trim();
+    zh.is_empty() || zh == "引用缺失"
+}
+
+/// 将拆解字段集渲染为 Markdown（导出用；跳过无引用的条目）
 fn fields_to_md(title: &str, fields: &[digest::DigestFieldResult]) -> String {
     let mut out = format!("# {title}\n\n");
     for f in fields {
+        if field_should_skip(f) {
+            continue;
+        }
         out.push_str(&format!("## {}\n\n", f.label));
         if let Some(t) = &f.table {
             if !t.is_empty() {
@@ -1555,10 +1589,11 @@ fn fields_to_md(title: &str, fields: &[digest::DigestFieldResult]) -> String {
                 out.push('\n');
             }
         }
-        out.push_str(&f.zh);
+        out.push_str(&clean_field_text(&f.zh));
         out.push('\n');
-        if !f.en.is_empty() {
-            out.push_str(&format!("\n_English:_ {}\n", f.en));
+        let en = clean_field_text(&f.en);
+        if !en.is_empty() {
+            out.push_str(&format!("\n_English:_ {en}\n"));
         }
         out.push('\n');
     }

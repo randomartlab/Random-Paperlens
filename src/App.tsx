@@ -748,6 +748,10 @@ function App() {
                 <div
                   key={d.id}
                   onClick={() => openReader(d)}
+                  onDoubleClick={() =>
+                    setView({ type: "reader", doc: d, initialMode: "original" })
+                  }
+                  title="双击直接打开原文"
                   className={`anim-fade-in flex items-center gap-4 rounded-xl border border-divider bg-panel px-5 py-4 transition-shadow hover:shadow-sm ${
                     d.status === "parsed" || d.status === "translated"
                       ? "cursor-pointer"
