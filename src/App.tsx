@@ -229,8 +229,15 @@ function App() {
   // 阅读页会整页替换内容，不吃氛围层（否则根容器透明会漏出底层）
   const showAmbient = Boolean(ambientBg) && view.type !== "reader";
 
+  /**
+   * 打开阅读页。
+   *
+   * 只要解析过就有内容可读——包括已拆解的（此前只放行 parsed/translated，
+   * 导致一篇文献拆解完，单击卡片反而打不开了，只剩双击这条路）。
+   */
+  const READABLE_STATUS = new Set(["parsed", "translated", "digested"]);
   const openReader = (doc: Doc) => {
-    if (doc.status === "parsed" || doc.status === "translated") setView({ type: "reader", doc });
+    if (READABLE_STATUS.has(doc.status)) setView({ type: "reader", doc });
   };
 
   const refresh = async () => {
@@ -799,14 +806,17 @@ function App() {
                 <div
                   key={d.id}
                   onClick={() => openReader(d)}
-                  onDoubleClick={() =>
-                    setView({ type: "reader", doc: d, initialMode: "original" })
+                  onDoubleClick={() => {
+                    if (READABLE_STATUS.has(d.status))
+                      setView({ type: "reader", doc: d, initialMode: "original" });
+                  }}
+                  title={
+                    READABLE_STATUS.has(d.status)
+                      ? "双击直接打开原文"
+                      : "解析完成后可打开阅读"
                   }
-                  title="双击直接打开原文"
                   className={`anim-fade-in flex items-center gap-4 rounded-xl border border-divider bg-panel px-5 py-4 transition-shadow hover:shadow-sm ${
-                    d.status === "parsed" || d.status === "translated"
-                      ? "cursor-pointer"
-                      : ""
+                    READABLE_STATUS.has(d.status) ? "cursor-pointer" : ""
                   }`}
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/5 text-lg">

@@ -143,7 +143,18 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        // 与 migrate() 里最后一次 PRAGMA user_version 保持一致（新加迁移时同步这里）
+        assert_eq!(version, 6);
+
+        // 新增迁移应带出对应列，避免只升了版本号却没建列
+        let has_note_name: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name = 'note_name'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_note_name, 1, "documents.note_name 缺失");
 
         // 验证表存在
         let tables: Vec<String> = conn

@@ -1,6 +1,6 @@
 [package]
 name = "litdesk"
-version = "0.4.8"
+version = "0.4.9"
 description = "Rd学术阅读器 - 本地优先的学术文献加工流水线"
 authors = ["bhliu"]
 edition = "2021"

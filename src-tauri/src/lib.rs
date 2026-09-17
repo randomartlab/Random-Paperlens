@@ -2348,12 +2348,33 @@ fn clear_document_cache(
     Ok(json!({ "cleared": cleared }))
 }
 
+/// 笔记名里题目部分的长度上限。
+///
+/// 论文题目动辄上百字符，整串塞进文件名会把「一作-年份-阅读笔记」挤掉
+/// （sanitize_name 的 120 字符上限是从尾部硬截，会切在单词中间），
+/// 所以先在这里按可读长度收口，同时把 Windows 路径长度风险一起压掉。
+const NOTE_TITLE_MAX: usize = 48;
+
+/// 题目过长时按长度截断；英文尽量切在词边界，中文按字数
+fn shorten_title(title: &str, max: usize) -> String {
+    if title.chars().count() <= max {
+        return title.to_string();
+    }
+    let head: String = title.chars().take(max).collect();
+    let cut = match head.rfind(|c| c == ' ' || c == ',' || c == '，' || c == ':' || c == '：') {
+        // 断点太靠前就不切了（说明整段没有合适的分隔符）
+        Some(i) if i >= max / 2 => head[..i].to_string(),
+        _ => head,
+    };
+    format!("{}…", cut.trim_end())
+}
+
 /// 生成笔记名：月-日-论文题目-一作-发表年份-阅读笔记（缺失项自动跳过）
 fn build_note_name(title: &str, authors: Option<&str>, year: Option<i64>) -> String {
     let mut parts: Vec<String> = vec![chrono::Local::now().format("%m-%d").to_string()];
     let t = title.trim();
     if !t.is_empty() {
-        parts.push(t.to_string());
+        parts.push(shorten_title(t, NOTE_TITLE_MAX));
     }
     if let Some(a) = authors {
         let first = a
@@ -2441,7 +2462,8 @@ fn append_to_note(
     }
 
     logging::info(&format!(
-        "添加到笔记 doc={doc_id} note={note_name}{}",
+        "添加到笔记 doc={doc_id} note={}{}",
+        notes::sanitize_name(&note_name),
         if first_time { "（新建）" } else { "（追加）" }
     ));
     Ok(json!({ "note_name": note_name, "created": first_time }))
@@ -2558,5 +2580,41 @@ pub fn run() {
     }
     if let Err(e) = app_result {
         eprintln!("应用运行异常: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LONG_TITLE: &str = "Confiding to AI: Impacts of ICE Framework-Based Body Movements of VR Chatbots on User Self-Disclosure and Experience";
+
+    #[test]
+    fn shorten_title_keeps_short_titles_intact() {
+        assert_eq!(shorten_title("A Short Title", 48), "A Short Title");
+        // 中文按字数截断
+        assert_eq!(shorten_title("短的题目", 48), "短的题目");
+    }
+
+    #[test]
+    fn shorten_title_cuts_long_titles_at_word_boundary() {
+        let s = shorten_title(LONG_TITLE, 48);
+        assert!(s.ends_with('…'), "长题应带省略号：{s}");
+        assert!(s.chars().count() <= 48, "截断后不应超过上限：{s}");
+        assert!(!s.contains("Self-Disclosure"), "不该把后半段带进来：{s}");
+    }
+
+    #[test]
+    fn build_note_name_keeps_author_and_year_readable() {
+        let n = build_note_name(LONG_TITLE, Some("Yuqi Liu, X"), Some(2024));
+        // 题目收口后，一作/年份/后缀不应被 sanitize_name 的 120 字符上限截掉
+        assert!(n.ends_with("-Yuqi Liu-2024-阅读笔记"), "尾部信息被挤掉了：{n}");
+        assert!(n.chars().count() < 100, "笔记名总长应收口：{}", n.chars().count());
+    }
+
+    #[test]
+    fn build_note_name_skips_missing_parts() {
+        let n = build_note_name("Title", None, None);
+        assert!(n.ends_with("-Title-阅读笔记"), "{n}");
     }
 }

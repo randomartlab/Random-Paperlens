@@ -1,5 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import {
+  buildExcerpt,
+  buildLocatorList,
+  locatorListFromBlocks,
+  mdHeadingLevel,
+  resolveExcerptTarget,
+  splitInteractiveBlocks,
+  splitSentences,
+  stripMdInline,
+} from "./readerText";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
@@ -318,62 +328,6 @@ function InlineMarkdown({ content }: { content: string }) {
   );
 }
 
-/** 中文：按句末标点切分 */
-function splitOnPunct(text: string, puncts: string[]): string[] {
-  const out: string[] = [];
-  let buf = "";
-  for (const ch of text) {
-    buf += ch;
-    if (puncts.includes(ch)) {
-      if (buf.trim()) out.push(buf.trim());
-      buf = "";
-    }
-  }
-  if (buf.trim()) out.push(buf.trim());
-  return out;
-}
-
-/**
- * 将段落文本切分为句子：
- * - 数学块（$...$ / $$...$$）视为不可拆分的整体（避免公式内句号误切）
- * - 中文按 。！？； 切分；英文按「句末标点 + 空格 + 大写字母」切分
- *   （避开 Fig. 1、et al.、小数等误切场景）
- */
-function splitSentences(text: string): string[] {
-  const sentences: string[] = [];
-  const mathRe = /(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g;
-  const chunks: { math: boolean; text: string }[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = mathRe.exec(text)) !== null) {
-    if (m.index > last) chunks.push({ math: false, text: text.slice(last, m.index) });
-    chunks.push({ math: true, text: m[0] });
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) chunks.push({ math: false, text: text.slice(last) });
-  if (chunks.length === 0) chunks.push({ math: false, text });
-
-  for (const c of chunks) {
-    if (c.math) {
-      sentences.push(c.text);
-      continue;
-    }
-    const t = c.text.trim();
-    if (!t) continue;
-    if (/[\u4e00-\u9fff]/.test(t)) {
-      for (const s of splitOnPunct(t, ["。", "！", "？", "；"])) sentences.push(s);
-    } else {
-      // 捕获分隔符重组的英文切句：tokens 为 [句, ".", 句, ".", ...]
-      const tokens = t.split(/([.!?])\s+(?=[A-Z])/);
-      for (let i = 0; i < tokens.length; i += 2) {
-        const cur = tokens[i] + (i + 1 < tokens.length ? tokens[i + 1] : "");
-        if (cur.trim()) sentences.push(cur.trim());
-      }
-    }
-  }
-  return sentences;
-}
-
 /**
  * 当前是否已有用户选区。
  *
@@ -384,6 +338,8 @@ function hasTextSelection(): boolean {
   const sel = window.getSelection();
   return !!sel && sel.toString().trim().length > 0;
 }
+
+
 
 /** 原文句 ↔ 译文句对齐：数量相同按索引；否则超出部分就近归并到末句 */
 function buildAlign(origLen: number, transLen: number) {
@@ -405,11 +361,14 @@ function SentencePair({
   seg,
   baseDir,
   imgNotes,
+  locator,
   onCopy,
 }: {
   seg: BilingualSegment;
   baseDir: string;
   imgNotes?: Record<string, string>;
+  /** 出处定位（章节路径 · 第 N 段），供右键摘录标注来源 */
+  locator?: string;
   /** 单击复制回调：传入文本与鼠标位置，用于就地给出反馈 */
   onCopy?: (text: string, x: number, y: number) => void;
 }) {
@@ -423,12 +382,19 @@ function SentencePair({
   );
 
   return (
-    <div className="grid grid-cols-2 gap-6 border-b border-divider py-6 first:pt-0">
+    <div
+      data-loc={locator}
+      // 落点在句间空白时的兜底：整段（原文 + 译文）
+      data-ex-full={[seg.original, seg.translated].filter(Boolean).join("\n\n")}
+      className="grid grid-cols-2 gap-6 border-b border-divider py-6 first:pt-0"
+    >
       <div className="min-w-0 leading-relaxed">
         {canSync && align ? (
           origSents.map((s, i) => (
             <span
               key={i}
+              // 无选区右键时按整句（原文 + 对应译文）摘录
+              data-ex={transSents[align.o2t(i)] ? `${s}\n${transSents[align.o2t(i)]}` : s}
               onMouseEnter={() => setHover({ orig: i, trans: align.o2t(i) })}
               onMouseLeave={() => setHover(null)}
               onClick={(e) => {
@@ -455,6 +421,7 @@ function SentencePair({
           transSents.map((s, j) => (
             <span
               key={j}
+              data-ex={origSents[align.t2o(j)] ? `${origSents[align.t2o(j)]}\n${s}` : s}
               onMouseEnter={() => setHover({ orig: align.t2o(j), trans: j })}
               onMouseLeave={() => setHover(null)}
               onClick={(e) => {
@@ -484,75 +451,25 @@ function SentencePair({
 /** 双语段落记忆化：翻译进度事件频繁触发时避免整段重渲染 */
 const SentencePairMemo = memo(SentencePair);
 
-/**
- * 把解析 Markdown 切成「可交互段落」与「原样块」。
- *
- * 普通段落按句拆分，以便悬停高亮与单击复制；
- * 标题、表格、代码块、图片、引用保持 Markdown 原样渲染，避免破坏结构
- * （公式、表格若被逐句拆开会散架）。
- */
-function splitInteractiveBlocks(md: string): { interactive: boolean; text: string }[] {
-  const blocks: { interactive: boolean; text: string }[] = [];
-  const lines = md.split("\n");
-  let buf: string[] = [];
-  let interactive = false;
-  let inCode = false;
-
-  const flush = () => {
-    const text = buf.join("\n").trim();
-    if (text) blocks.push({ interactive, text });
-    buf = [];
-  };
-
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith("```")) {
-      if (inCode) {
-        buf.push(line);
-        inCode = false;
-        flush();
-      } else {
-        flush();
-        interactive = false;
-        inCode = true;
-        buf.push(line);
-      }
-      continue;
-    }
-    if (inCode) {
-      buf.push(line);
-      continue;
-    }
-    if (!t) {
-      flush();
-      continue;
-    }
-    // 结构块：标题 / 表格行 / 图片 / 引用
-    const isBlock =
-      /^#{1,6}\s/.test(t) || t.startsWith("|") || t.startsWith("![") || t.startsWith("> ");
-    const want = !isBlock;
-    if (buf.length && want !== interactive) flush();
-    interactive = want;
-    buf.push(line);
-  }
-  flush();
-  return blocks;
-}
-
 /** 原文视图的逐句交互渲染：段落内每句可悬停高亮、单击复制 */
 function MarkdownSentences({
   content,
   baseDir,
   imgNotes,
+  title,
   onCopy,
 }: {
   content: string;
   baseDir: string;
   imgNotes?: Record<string, string>;
+  /** 论文题目：用于把一级标题（题目本身）从出处路径里去掉 */
+  title?: string;
   onCopy?: (text: string, x: number, y: number) => void;
 }) {
   const [hover, setHover] = useState<string | null>(null);
   const blocks = useMemo(() => splitInteractiveBlocks(content), [content]);
+  // 每个块的出处定位：标题维护章节路径，正文块依次计段，表格/图片等穿透
+  const locators = useMemo(() => locatorListFromBlocks(blocks, title), [blocks, title]);
 
   return (
     <>
@@ -566,12 +483,18 @@ function MarkdownSentences({
         }
         const sents = splitSentences(b.text);
         return (
-          <p key={i}>
+          <p
+            key={i}
+            data-loc={locators[i]}
+            // 落点在句间空白时的兜底：整段
+            data-ex-full={sents.join(" ")}
+          >
             {sents.map((s, j) => {
               const key = `${i}-${j}`;
               return (
                 <span
                   key={j}
+                  data-ex={s}
                   onMouseEnter={() => setHover(key)}
                   onMouseLeave={() => setHover(null)}
                   onClick={(e) => {
@@ -640,8 +563,34 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   ];
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  // F8 摘录：自定义右键菜单（选中文本时出现）
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; text: string } | null>(null);
+  // F8 摘录：自定义右键菜单（选区或整句）
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; text: string; loc: string } | null>(
+    null,
+  );
+  /**
+   * 是否由「拖拽」产生了选区。
+   *
+   * 只用「有没有选区」判断用户意图是不够的：双击选词、或上一次拖选留下的残留选区，
+   * 都会让右键摘录只拿到几个字。这里以鼠标是否真的移动过来区分：
+   * 拖选 → 用户只要选中的片段；否则 → 以光标所在的整句为准。
+   */
+  const dragSelRef = useRef(false);
+  const downPosRef = useRef<{ x: number; y: number } | null>(null);
+  const trackMouseDown = (e: React.MouseEvent) => {
+    // 只认左键：右键（摘录菜单）不能把拖拽标记冲掉，否则拖选后右键会退回"整句"
+    if (e.button !== 0) return;
+    downPosRef.current = { x: e.clientX, y: e.clientY };
+    dragSelRef.current = false;
+  };
+  const trackMouseMove = (e: React.MouseEvent) => {
+    const d = downPosRef.current;
+    if (!d || e.buttons !== 1) return;
+    if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 6) dragSelRef.current = true;
+  };
+  const trackMouseUp = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    downPosRef.current = null;
+  };
   // 单击复制的就地反馈：记录鼠标位置，短暂显示「已复制」
   const [copyToast, setCopyToast] = useState<{ x: number; y: number; label?: string } | null>(
     null,
@@ -669,36 +618,68 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     copyToastTimer.current = window.setTimeout(() => setCopyToast(null), 1400);
   }, []);
 
+  /** 摘录文本组装：引用块 + 出处行（章节路径 · 第 N 段），见 readerText.buildExcerpt */
+  const makeExcerpt = useCallback(
+    (text: string, loc?: string) => buildExcerpt(text, loc, title),
+    [title],
+  );
+
   /**
    * 把选中的文本加入该文献对应的笔记。
    * 首次会按命名规则新建笔记并建立关联，之后追加到同一份笔记末尾。
    */
   const addToNote = async (x: number, y: number) => {
     if (!ctxMenu) return;
-    const excerpt = `> ${ctxMenu.text.replace(/\n+/g, "\n> ")}\n> ——《${title ?? "文献"}》`;
+    const excerpt = makeExcerpt(ctxMenu.text, ctxMenu.loc);
+    const loc = ctxMenu.loc;
     setCtxMenu(null);
     try {
       const r = await invoke<{ note_name: string; created: boolean }>("append_to_note", {
         docId,
         text: excerpt,
       });
-      flashToast(r.created ? "已新建笔记" : "已追加到笔记", x, y);
+      flashToast(
+        r.created ? `已新建笔记 · ${loc || "已摘录"}` : `已追加到笔记 · ${loc || "已摘录"}`,
+        x,
+        y,
+      );
     } catch (e) {
       flashToast(`添加失败：${String(e)}`, x, y);
     }
   };
 
+  /**
+   * 右键菜单的入口判定：
+   * - 拖拽产生的选区 → 摘录所选片段
+   * - 否则（仅悬停、双击选词、残留选区）→ 摘录光标所在的整句；
+   *   若落点正好在句间空白（不是任何句子的 DOM 子节点），退为整段
+   * - 两者都不成立 → 不接管，交回原生菜单
+   */
   const handleCtx = (e: React.MouseEvent) => {
-    const sel = window.getSelection()?.toString().trim();
-    if (sel) {
+    const target = e.target as Element | null;
+    const hit = resolveExcerptTarget(target);
+    const selText = window.getSelection()?.toString().trim() ?? "";
+    if (selText && dragSelRef.current) {
       e.preventDefault();
-      setCtxMenu({ x: e.clientX, y: e.clientY, text: sel });
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        text: selText,
+        loc: (target?.closest?.("[data-loc]") as HTMLElement | null)?.dataset.loc ?? "",
+      });
+      return;
+    }
+    if (hit) {
+      e.preventDefault();
+      // 清掉点击/双击留下的残留选区，避免高亮的片段与即将摘录的内容不一致
+      window.getSelection()?.removeAllRanges();
+      setCtxMenu({ x: e.clientX, y: e.clientY, text: hit.text, loc: hit.loc });
     }
   };
 
   const copyExcerpt = async () => {
     if (!ctxMenu) return;
-    const excerpt = `> ${ctxMenu.text.replace(/\n+/g, "\n> ")}\n> ——《${title ?? "文献"}》`;
+    const excerpt = makeExcerpt(ctxMenu.text, ctxMenu.loc);
     try {
       await navigator.clipboard.writeText(excerpt);
       setExportMsg("已复制摘录，可粘贴到「笔记」中");
@@ -986,6 +967,22 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
     () => [...liveSegs.values()].sort((a, b) => a.index - b.index),
     [liveSegs],
   );
+  // 双语视图每段的出处定位（与 sortedSegs 同序），供右键摘录标注来源
+  const segLocators = useMemo(
+    () =>
+      buildLocatorList(
+        sortedSegs.map((seg) => {
+          if (seg.kind === "paragraph") return { kind: "body" as const };
+          const firstLine = seg.original.split("\n")[0];
+          const level = mdHeadingLevel(firstLine);
+          return level === null
+            ? { kind: "other" as const }
+            : { kind: "heading" as const, level, text: stripMdInline(firstLine) };
+        }),
+        title,
+      ),
+    [sortedSegs, title],
+  );
   const translatedContent = useMemo(
     () =>
       sortedSegs
@@ -1190,7 +1187,13 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
         )}
 
         {/* 内容滚动区 */}
-        <div id="reader-scroll" className="flex-1 overflow-y-auto">
+        <div
+          id="reader-scroll"
+          className="flex-1 overflow-y-auto"
+          onMouseDown={trackMouseDown}
+          onMouseMove={trackMouseMove}
+          onMouseUp={trackMouseUp}
+        >
         <div key={mode} className="anim-fade-in h-full">
         {loading ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-primary/45">
@@ -1339,6 +1342,10 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
                 ) : (
                   <div
                     key={fld.name}
+                    data-loc={`拆解 · ${fld.label}`}
+                    data-ex={[`【${fld.label}】`, fld.zh, fld.en, fld.table]
+                      .filter(Boolean)
+                      .join("\n\n")}
                     onMouseEnter={() => setHoverField(i)}
                     onMouseLeave={() => setHoverField(null)}
                     onClick={(e) => {
@@ -1441,13 +1448,14 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
             </div>
           ) : (
             <div
-              className="prose prose-slate mx-auto max-w-3xl px-8 py-8 prose-headings:tracking-tight prose-a:text-blue-700"
+              className="prose mx-auto max-w-3xl px-8 py-8 prose-headings:tracking-tight"
               onContextMenu={handleCtx}
             >
               <MarkdownSentencesMemo
                 content={originalInjected}
                 baseDir={baseDir}
                 imgNotes={imgNotes}
+                title={title}
                 onCopy={copyWithFeedback}
               />
             </div>
@@ -1460,7 +1468,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
         ) : mode === "translated" ? (
           hasTranslated ? (
             <div
-              className="prose prose-slate mx-auto max-w-3xl px-8 py-8 prose-headings:tracking-tight prose-a:text-blue-700"
+              className="prose mx-auto max-w-3xl px-8 py-8 prose-headings:tracking-tight"
               onContextMenu={handleCtx}
             >
               <MarkdownBodyMemo content={translatedInjected} baseDir={baseDir} imgNotes={imgNotes} />
@@ -1497,13 +1505,14 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
                 <div className="py-16 text-center text-sm text-primary/45">暂无译文</div>
               )
             ) : (
-              sortedSegs.map((seg) =>
+              sortedSegs.map((seg, si) =>
                 seg.kind === "paragraph" ? (
                   <SentencePairMemo
                     key={seg.index}
                     seg={seg}
                     baseDir={baseDir}
                     imgNotes={imgNotes}
+                    locator={segLocators[si]}
                     onCopy={copyWithFeedback}
                   />
                 ) : (
@@ -1545,7 +1554,7 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
           {copyToast.label ?? "已复制"}
         </div>
       )}
-      {/* F8 摘录右键菜单（选中文本时出现） */}
+      {/* F8 摘录右键菜单（选中片段或整句时出现） */}
       {ctxMenu && (
         <>
           <div
@@ -1557,9 +1566,18 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
             }}
           />
           <div
-            className="fixed z-50 overflow-hidden rounded-lg border border-divider-strong bg-panel py-1 shadow-lg"
-            style={{ left: Math.min(ctxMenu.x, window.innerWidth - 190), top: ctxMenu.y }}
+            className="fixed z-50 w-64 overflow-hidden rounded-lg border border-divider-strong bg-panel py-1 shadow-lg"
+            style={{ left: Math.min(ctxMenu.x, window.innerWidth - 268), top: ctxMenu.y }}
           >
+            {/* 摘录预览：先让使用者看清"这次会摘到哪一句、标的是哪一段" */}
+            <div className="border-b border-divider px-3 py-1.5">
+              <div className="text-[10px] leading-snug text-primary/45">
+                {ctxMenu.loc || "未定位到章节"}
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-primary/70">
+                {ctxMenu.text}
+              </div>
+            </div>
             <button
               onClick={copyExcerpt}
               className="block w-full px-3 py-1.5 text-left text-xs text-primary/75 hover:bg-hover"

@@ -477,13 +477,19 @@ function NotesView() {
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between border-b border-divider px-4 py-2">
-              <div className="min-w-0">
-                <span className="truncate text-sm font-semibold">{selected}</span>
-                <span className="ml-2 text-[11px] text-primary/40">.md · 本地文件</span>
-                {dirty && (
-                  <span className="ml-2 text-[11px] text-warning-fg">未保存…</span>
-                )}
+            <div className="flex items-start justify-between gap-3 border-b border-divider px-4 py-2">
+              {/* min-w-0 + 块级截断：长笔记名换行显示，不再溢出到右侧按钮下面 */}
+              <div className="min-w-0 flex-1">
+                <div
+                  className="line-clamp-2 break-all text-sm font-semibold"
+                  title={selected}
+                >
+                  {selected}
+                </div>
+                <div className="mt-0.5 text-[11px] text-primary/40">
+                  .md · 本地文件
+                  {dirty && <span className="ml-2 text-warning-fg">未保存…</span>}
+                </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 <button
@@ -552,7 +558,7 @@ function NotesView() {
               />
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <article className="prose prose-sm max-w-none dark:prose-invert">
+                <article className="prose prose-sm max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
                 </article>
               </div>

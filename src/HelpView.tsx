@@ -245,9 +245,12 @@ function HelpView({ onClose }: Props) {
                 </p>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">
-                <div className="text-sm font-medium">添加到笔记</div>
+                <div className="text-sm font-medium">右键摘录与添加到笔记</div>
                 <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
-                  选中文本后右键「添加到笔记」：首次会按「月-日-题目-一作-年份-阅读笔记」新建笔记，之后同一篇文献再添加就追加到同一份笔记末尾。
+                  鼠标停在某句上直接右键，摘的是<span className="font-medium text-primary/70">这一整句</span>（双语下连对应译文）；想只留片段就先拖选再右键。出处标注为「章节·小节·第 N 段」，菜单里会先预览再落笔。
+                </p>
+                <p className="mt-1.5 text-xs leading-relaxed text-primary/55">
+                  「添加到笔记」首次会按「月-日-题目-一作-年份-阅读笔记」新建笔记（题目过长会截断），之后同一篇文献再添加就追加到同一份笔记末尾。
                 </p>
               </div>
               <div className="rounded-xl border border-divider bg-panel p-4">

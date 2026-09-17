@@ -227,8 +227,15 @@ html.theme-transition *::after {
   animation: spin 0.7s linear infinite;
 }
 
-/* 正文 prose 适配（覆盖 @tailwindcss/typography 变量，跟随主题 token） */
-.prose {
+/* 正文 prose 适配（覆盖 @tailwindcss/typography 变量，跟随主题 token）
+   —— typography 的 .prose-slate / .prose-invert 与这里同优先级，谁在文件里靠后谁生效；
+   实测编译产物里插件规则排在本文件之后，会把正文改成固定的 slate 黑/蓝。
+   因此这里用叠加类提高优先级：任何主题下正文都只吃 --color-prose-* 一套 token。 */
+.prose,
+.prose.prose-slate,
+.prose.prose-invert,
+.prose.prose-sm,
+.prose.prose-lg {
   --tw-prose-body: var(--color-prose-body);
   --tw-prose-headings: var(--color-prose-heading);
   --tw-prose-lead: var(--color-prose-muted);
