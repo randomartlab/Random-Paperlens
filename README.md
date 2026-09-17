@@ -139,6 +139,14 @@
 
 已处理过的文献可以随时**重置**：清除解析、翻译、拆解产物并回退状态，原始 PDF 保留，用于换模型重跑或验证不同范式下的拆解效果。
 
+### 关于篇幅：适合单篇论文，不适合大部头
+
+翻译与拆解都是**全量处理**——翻译按段落切分逐段调用，拆解按字段逐个请求、每次携带一份检索出的上下文。token 消耗随篇幅增长得很快。
+
+**请不要导入专著、论文集，或者上百页的学位论文。** 一次全量翻译加拆解可能吃掉相当可观的额度，而且拆解结果未必比逐章处理更清楚——超长文档更划算的做法是拆成几份分别导入。
+
+单篇期刊或会议论文（几页到几十页）是这个工具的最佳区间。
+
 ---
 
 ## 支持的八种研究范式
@@ -187,10 +195,12 @@ npm run tauri build -- --bundles app,dmg --target aarch64-apple-darwin
 npm run tauri build -- --bundles app,dmg --target x86_64-apple-darwin
 ```
 
-发布打包需要签名密钥（否则不生成更新产物）：
+发布打包需要签名密钥（否则不会生成更新产物）。注意三点：传的是 key 的**内容**而非文件路径（`_PATH` 变量不被识别）；**空密码的密钥也必须显式给出密码变量**，否则 Tauri 会尝试交互式询问而失败：
 
 ```bash
-TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/litdesk.key npm run tauri build -- --bundles app,dmg
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/litdesk.key)" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+npm run tauri build -- --bundles app,dmg
 ```
 
 Windows（需在 Windows 上执行，NSIS 必需显式指定）：
