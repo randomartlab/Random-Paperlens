@@ -25,7 +25,13 @@ interface Doc {
   created_at: string;
 }
 
-export type ThemePreset = "default" | "minimal" | "dracula" | "blue-topaz" | "catppuccin";
+export type ThemePreset =
+  | "default"
+  | "minimal"
+  | "dracula"
+  | "blue-topaz"
+  | "catppuccin"
+  | "neon";
 
 const THEME_PRESETS: { id: ThemePreset; name: string }[] = [
   { id: "default", name: "默认" },
@@ -33,6 +39,7 @@ const THEME_PRESETS: { id: ThemePreset; name: string }[] = [
   { id: "dracula", name: "Dracula" },
   { id: "blue-topaz", name: "Blue Topaz" },
   { id: "catppuccin", name: "Catppuccin" },
+  { id: "neon", name: "Neon" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -647,6 +654,14 @@ function App() {
 
       {/* 内容区 */}
       <main className="flex-1 overflow-y-auto p-6">
+        {/* Neon 主题的氛围层：只作用于文献库（列表）页。
+            阅读、笔记、设置等栏目只继承主题的色调 token，不铺这层装饰 */}
+        {themePreset === "neon" && tab === "文献库" && (
+          <div className="pointer-events-none fixed inset-0 -z-10">
+            <div className="neon-aurora absolute inset-0" />
+            <div className="neon-grid absolute inset-0" />
+          </div>
+        )}
         <div key={tab} className="anim-fade-in h-full">
         {tab === "设置" ? (
           <SettingsView themePreset={themePreset} onThemePreset={setThemePreset} />
