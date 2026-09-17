@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -370,6 +370,17 @@ function splitSentences(text: string): string[] {
   return sentences;
 }
 
+/**
+ * 当前是否已有用户选区。
+ *
+ * 单击复制前先判断：若用户正在拖选文字，说明他想精确选中某个词或片段，
+ * 此时不触发复制，从而保留手动选取词语/句子的能力。
+ */
+function hasTextSelection(): boolean {
+  const sel = window.getSelection();
+  return !!sel && sel.toString().trim().length > 0;
+}
+
 /** 原文句 ↔ 译文句对齐：数量相同按索引；否则超出部分就近归并到末句 */
 function buildAlign(origLen: number, transLen: number) {
   if (origLen === transLen) {
@@ -390,10 +401,13 @@ function SentencePair({
   seg,
   baseDir,
   imgNotes,
+  onCopy,
 }: {
   seg: BilingualSegment;
   baseDir: string;
   imgNotes?: Record<string, string>;
+  /** 单击复制回调：传入文本与鼠标位置，用于就地给出反馈 */
+  onCopy?: (text: string, x: number, y: number) => void;
 }) {
   const [hover, setHover] = useState<{ orig: number; trans: number } | null>(null);
   const origSents = useMemo(() => splitSentences(seg.original), [seg.original]);
@@ -413,6 +427,13 @@ function SentencePair({
               key={i}
               onMouseEnter={() => setHover({ orig: i, trans: align.o2t(i) })}
               onMouseLeave={() => setHover(null)}
+              onClick={(e) => {
+                // 有选区说明用户在手动选字，让位给原生选择行为
+                if (hasTextSelection()) return;
+                const t = transSents[align.o2t(i)];
+                onCopy?.(t ? `${s}\n${t}` : s, e.clientX, e.clientY);
+              }}
+              title="单击复制该句（原文 + 对应译文）"
               className={`cursor-pointer rounded px-0.5 transition-colors ${
                 hover?.orig === i ? "bg-mark" : ""
               }`}
@@ -432,6 +453,12 @@ function SentencePair({
               key={j}
               onMouseEnter={() => setHover({ orig: align.t2o(j), trans: j })}
               onMouseLeave={() => setHover(null)}
+              onClick={(e) => {
+                if (hasTextSelection()) return;
+                const o = origSents[align.t2o(j)];
+                onCopy?.(o ? `${o}\n${s}` : s, e.clientX, e.clientY);
+              }}
+              title="单击复制该句（原文 + 对应译文）"
               className={`cursor-pointer rounded px-0.5 transition-colors ${
                 hover?.trans === j ? "bg-mark" : ""
               }`}
@@ -487,6 +514,23 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
   const [exporting, setExporting] = useState(false);
   // F8 摘录：自定义右键菜单（选中文本时出现）
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; text: string } | null>(null);
+  // 单击复制的就地反馈：记录鼠标位置，短暂显示「已复制」
+  const [copyToast, setCopyToast] = useState<{ x: number; y: number } | null>(null);
+  const copyToastTimer = useRef<number | null>(null);
+  // 拆解栏当前悬停的条目（整条高亮，提示可整条复制）
+  const [hoverField, setHoverField] = useState<number | null>(null);
+
+  /** 复制文本并在鼠标位置给出「已复制」反馈（约 0.9 秒后自动消失） */
+  const copyWithFeedback = useCallback(async (text: string, x: number, y: number) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return; // 剪贴板不可用时静默跳过，避免给出错误的成功反馈
+    }
+    setCopyToast({ x, y });
+    if (copyToastTimer.current !== null) window.clearTimeout(copyToastTimer.current);
+    copyToastTimer.current = window.setTimeout(() => setCopyToast(null), 900);
+  }, []);
 
   const handleCtx = (e: React.MouseEvent) => {
     const sel = window.getSelection()?.toString().trim();
@@ -1090,7 +1134,26 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
                 ) : (
                   <div
                     key={fld.name}
-                    className="mb-5 rounded-xl border border-divider bg-surface p-5"
+                    onMouseEnter={() => setHoverField(i)}
+                    onMouseLeave={() => setHoverField(null)}
+                    onClick={(e) => {
+                      // 有选区时让位给原生文本选择，不触发整条复制
+                      if (hasTextSelection()) return;
+                      const parts = [`【${fld.label}】`, fld.zh];
+                      if (fld.en) parts.push(fld.en);
+                      if (fld.table) parts.push(fld.table);
+                      void copyWithFeedback(
+                        parts.filter(Boolean).join("\n\n"),
+                        e.clientX,
+                        e.clientY,
+                      );
+                    }}
+                    title="单击复制该条目（含中英对照）"
+                    className={`mb-5 cursor-pointer rounded-xl border p-5 transition-colors ${
+                      hoverField === i
+                        ? "border-primary/25 bg-primary/[0.03]"
+                        : "border-divider bg-surface"
+                    }`}
                   >
                     <div className="mb-3 flex flex-wrap items-center gap-1.5">
                       <span className="text-sm font-semibold">{fld.label}</span>
@@ -1217,7 +1280,13 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
             ) : (
               sortedSegs.map((seg) =>
                 seg.kind === "paragraph" ? (
-                  <SentencePairMemo key={seg.index} seg={seg} baseDir={baseDir} imgNotes={imgNotes} />
+                  <SentencePairMemo
+                    key={seg.index}
+                    seg={seg}
+                    baseDir={baseDir}
+                    imgNotes={imgNotes}
+                    onCopy={copyWithFeedback}
+                  />
                 ) : (
                   <div
                     key={seg.index}
@@ -1248,6 +1317,15 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
           </div>
         </div>
       </main>
+      {/* 单击复制的就地反馈 */}
+      {copyToast && (
+        <div
+          className="anim-fade-in pointer-events-none fixed z-50 rounded-md bg-primary/90 px-2 py-0.5 text-[11px] font-medium text-primary-inverse shadow-lg"
+          style={{ left: copyToast.x + 10, top: copyToast.y + 14 }}
+        >
+          已复制
+        </div>
+      )}
       {/* F8 摘录右键菜单（选中文本时出现） */}
       {ctxMenu && (
         <>

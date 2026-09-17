@@ -1,0 +1,173 @@
+name: 发布
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------- macOS（双架构） ----------------
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 校验版本号一致性
+        shell: bash
+        # 三处版本号必须一致，否则安装包名、界面版本与更新清单会互相矛盾
+        run: |
+          A=$(node -p "require('./package.json').version")
+          B=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          C=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "package.json=$A  tauri.conf.json=$B  Cargo.toml=$C"
+          if [ "$A" != "$B" ] || [ "$B" != "$C" ]; then
+            echo "::error::版本号不一致，请先同步后再打包"
+            exit 1
+          fi
+
+      - name: 构建并打包（DMG + 更新包，含签名）
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --bundles dmg --target ${{ matrix.target }}
+
+      - name: 归档产物（统一为 ASCII 文件名）
+        shell: bash
+        run: |
+          mkdir -p out
+          V=$(node -p "require('./package.json').version")
+          D="src-tauri/target/${{ matrix.target }}/release/bundle"
+          cp "$D"/dmg/*.dmg "out/litdesk_${V}_${{ matrix.arch }}.dmg"
+          cp "$D"/macos/*.app.tar.gz "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz"
+          cp "$D"/macos/*.app.tar.gz.sig "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz.sig"
+          ls -lh out
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: out/*
+
+  # ---------------- Windows ----------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 校验版本号一致性
+        shell: bash
+        run: |
+          A=$(node -p "require('./package.json').version")
+          B=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          C=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "package.json=$A  tauri.conf.json=$B  Cargo.toml=$C"
+          if [ "$A" != "$B" ] || [ "$B" != "$C" ]; then
+            echo "::error::版本号不一致，请先同步后再打包"
+            exit 1
+          fi
+
+      - name: 构建并打包（NSIS，含签名）
+        # MSI(WiX light) 对中文 productName 存在已知兼容问题，NSIS 安装包为交付形态
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --bundles nsis
+
+      - name: 归档产物（统一为 ASCII 文件名）
+        shell: bash
+        run: |
+          mkdir -p out
+          V=$(node -p "require('./package.json').version")
+          D="src-tauri/target/release/bundle/nsis"
+          cp "$D"/*.exe "out/litdesk_${V}_x64-setup.exe"
+          cp "$D"/*.nsis.zip "out/litdesk_${V}_x64-setup.nsis.zip"
+          cp "$D"/*.nsis.zip.sig "out/litdesk_${V}_x64-setup.nsis.zip.sig"
+          ls -lh out
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: out/*
+
+  # ---------------- 汇总并发布 ----------------
+  release:
+    needs: [build-macos, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 列出产物
+        run: find artifacts -type f | sort
+
+      - name: 生成更新清单 latest.json
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          export VERSION="${VERSION#v}"
+          node scripts/make-latest-json.mjs artifacts
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*
+            latest.json
+          generate_release_notes: false

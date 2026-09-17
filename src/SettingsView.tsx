@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import type { ThemePreset } from "./App";
 
 interface ApiConfig {
@@ -110,6 +112,16 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
   /** 剪贴板不可用时的诊断文本降级展示（Windows WebView2 可能拒绝 clipboard API） */
   const [diagFallback, setDiagFallback] = useState<string | null>(null);
 
+  // 软件更新：仅在用户点击时联网检查，确认后才下载，重启时机由用户决定
+  const [updateState, setUpdateState] = useState<
+    "idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error"
+  >("idle");
+  const [updateVersion, setUpdateVersion] = useState("");
+  const [updateNotes, setUpdateNotes] = useState("");
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateError, setUpdateError] = useState("");
+  const pendingUpdate = useRef<Update | null>(null);
+
   const refresh = useCallback(async () => {
     setConfigs(await invoke<ApiConfig[]>("list_api_configs"));
     setGlossary(await invoke<GlossaryEntry[]>("list_glossary"));
@@ -182,6 +194,54 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
       // Windows WebView2 下剪贴板 API 可能被拒绝，退回可手动全选的文本框
       setDiagFallback(text);
       setNotice("剪贴板不可用，请在下方文本框中全选复制");
+    }
+  };
+
+  /** 手动检查更新：只在用户点击时请求，不做后台轮询 */
+  const checkUpdate = async () => {
+    setUpdateState("checking");
+    setUpdateError("");
+    try {
+      const update = await check();
+      if (!update) {
+        setUpdateState("latest");
+        return;
+      }
+      pendingUpdate.current = update;
+      setUpdateVersion(update.version);
+      setUpdateNotes(update.body ?? "");
+      setUpdateState("available");
+    } catch (e) {
+      setUpdateError(String(e));
+      setUpdateState("error");
+    }
+  };
+
+  /** 用户确认后下载并安装（带进度）；重启由用户另行决定，避免打断手头工作 */
+  const downloadUpdate = async () => {
+    const update = pendingUpdate.current;
+    if (!update) return;
+    setUpdateState("downloading");
+    setUpdateProgress(0);
+    try {
+      let total = 0;
+      let received = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === "Progress") {
+          received += event.data.chunkLength;
+          if (total > 0) {
+            setUpdateProgress(Math.min(100, Math.round((received / total) * 100)));
+          }
+        } else if (event.event === "Finished") {
+          setUpdateProgress(100);
+        }
+      });
+      setUpdateState("ready");
+    } catch (e) {
+      setUpdateError(String(e));
+      setUpdateState("error");
     }
   };
 
@@ -961,6 +1021,83 @@ function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset
                 className="rounded-md border border-divider-strong px-2.5 py-1 text-xs text-primary/70 hover:bg-hover"
               >
                 清空统计
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ============ 软件更新 ============ */}
+      <section className="mt-8">
+        <div className="mb-3">
+          <h2 className="text-[15px] font-semibold">软件更新</h2>
+          <p className="mt-0.5 text-xs text-primary/50">
+            仅在你点击时检查，不会后台联网。更新包经签名校验，下载完成后重启应用生效。
+          </p>
+        </div>
+        <div className="rounded-xl border border-divider bg-panel p-5 shadow-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs text-primary/55">当前版本</span>
+            <code className="rounded bg-hover px-2 py-0.5 text-xs text-primary/80">
+              v{diag.version ?? "…"}
+            </code>
+            <button
+              onClick={checkUpdate}
+              disabled={updateState === "checking" || updateState === "downloading"}
+              className="rounded-md border border-divider-strong px-2.5 py-1 text-xs text-primary/70 transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {updateState === "checking" ? "检查中…" : "检查更新"}
+            </button>
+            {updateState === "latest" && (
+              <span className="text-xs text-success-fg">已是最新版本</span>
+            )}
+          </div>
+
+          {updateState === "error" && (
+            <p className="mt-3 text-xs text-warning-fg">检查更新失败：{updateError}</p>
+          )}
+
+          {updateState === "available" && (
+            <div className="mt-3 rounded-lg border border-divider-strong bg-hover p-3">
+              <p className="text-xs text-primary/80">
+                发现新版本 <strong>v{updateVersion}</strong>
+              </p>
+              {updateNotes && (
+                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-primary/60">
+                  {updateNotes}
+                </pre>
+              )}
+              <button
+                onClick={downloadUpdate}
+                className="mt-3 rounded-md bg-primary/90 px-3 py-1.5 text-xs font-medium text-primary-inverse transition-colors hover:bg-primary"
+              >
+                下载并安装
+              </button>
+            </div>
+          )}
+
+          {updateState === "downloading" && (
+            <div className="mt-3">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-track">
+                <div
+                  className="h-full bg-primary/70 transition-all"
+                  style={{ width: `${updateProgress}%` }}
+                />
+              </div>
+              <p className="mt-1.5 text-[11px] text-primary/50">正在下载 {updateProgress}%</p>
+            </div>
+          )}
+
+          {updateState === "ready" && (
+            <div className="mt-3 rounded-lg border border-divider-strong bg-hover p-3">
+              <p className="text-xs text-primary/80">
+                更新已下载并安装完成，重启应用后生效。
+              </p>
+              <button
+                onClick={() => void relaunch()}
+                className="mt-3 rounded-md bg-primary/90 px-3 py-1.5 text-xs font-medium text-primary-inverse transition-colors hover:bg-primary"
+              >
+                立即重启
               </button>
             </div>
           )}
