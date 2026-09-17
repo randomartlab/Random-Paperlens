@@ -334,7 +334,7 @@ pub fn replace_in_notes(
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_name;
+    use super::{sanitize_name, wrap_html};
 
     /// Windows 非法字符必须被剔除，否则在 Windows 上写文件会直接失败（macOS 无此限制）
     #[test]
@@ -358,5 +358,19 @@ mod tests {
     fn sanitize_falls_back_for_empty() {
         assert_eq!(sanitize_name("   "), "未命名笔记");
         assert_eq!(sanitize_name("///"), "未命名笔记");
+    }
+
+    /// 导出 HTML 的组装链路：笔记 Markdown 应被转换并包进完整 HTML 文档
+    /// （对应 export_note 的 html 分支；文件写入由对话框路径保证目录存在）
+    #[test]
+    fn note_export_html_wraps_markdown() {
+        let md = "# 小标题\n\n正文 **加粗** 与 `代码`。\n\n| A | B |\n|---|---|\n| 1 | 2 |\n";
+        let body = crate::export::md_to_html(md, std::path::Path::new("/tmp"));
+        let html = wrap_html("测试笔记", &body);
+        assert!(html.contains("<!DOCTYPE html>"), "应为完整 HTML 文档");
+        assert!(html.contains("<h1>测试笔记</h1>"), "标题应写入文档");
+        assert!(html.contains("<strong>加粗</strong>"), "粗体应转换");
+        assert!(html.contains("<code>代码</code>"), "行内代码应转换");
+        assert!(html.contains("<table>"), "表格应转换");
     }
 }
