@@ -928,3 +928,90 @@ html.theme-transition *::after {
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 80%);
   -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 80%);
 }
+
+/* ---- Amber（暖琥珀 + 深棕）---- */
+:root[data-theme="amber"] {
+  color-scheme: light;
+
+  --color-canvas: #fdf8f1;
+  --color-panel: #ffffff;
+  --color-surface: #fdfaf5;
+  --color-hover: rgba(180, 120, 20, 0.06);
+  --color-track: rgba(180, 120, 20, 0.07);
+  --color-primary: #3a2a18;
+  --color-primary-inverse: #ffffff;
+  --color-divider: rgba(180, 120, 20, 0.1);
+  --color-divider-strong: rgba(180, 120, 20, 0.18);
+  --color-divider-bold: rgba(180, 120, 20, 0.32);
+
+  --color-info-bg: rgba(37, 99, 235, 0.1);
+  --color-info-fg: #2563eb;
+  --color-info-border: rgba(37, 99, 235, 0.24);
+  --color-success-bg: rgba(13, 148, 136, 0.1);
+  --color-success-fg: #0d9488;
+  --color-success-border: rgba(13, 148, 136, 0.24);
+  --color-warning-bg: rgba(180, 83, 9, 0.12);
+  --color-warning-fg: #b45309;
+  --color-warning-border: rgba(180, 83, 9, 0.26);
+  --color-danger-bg: rgba(190, 24, 93, 0.1);
+  --color-danger-fg: #be185d;
+  --color-danger-border: rgba(190, 24, 93, 0.24);
+  --color-mark: rgba(245, 158, 11, 0.22);
+
+  --color-brand: #b45309;
+  --color-brand-strong: #92400e;
+  --color-brand-soft: rgba(180, 83, 9, 0.1);
+  --color-brand-hover: rgba(180, 83, 9, 0.16);
+  --color-brand-border: rgba(180, 83, 9, 0.28);
+  --color-prose-body: #4a3826;
+  --color-prose-heading: #3a2a18;
+  --color-prose-muted: #8a7458;
+  --color-prose-link: #b45309;
+  --color-prose-code: #3a2a18;
+  --color-prose-border: rgba(180, 120, 20, 0.18);
+  --color-hljs-bg: #fbf5ec;
+  --color-hljs-fg: #4a3826;
+}
+
+.dark[data-theme="amber"] {
+  color-scheme: dark;
+
+  --color-canvas: #1a1512;
+  --color-panel: #241d18;
+  --color-surface: #2b221b;
+  --color-hover: rgba(245, 200, 140, 0.08);
+  --color-track: rgba(245, 200, 140, 0.1);
+  --color-primary: #f6e4cd;
+  --color-primary-inverse: #1a1512;
+  --color-divider: rgba(245, 200, 140, 0.12);
+  --color-divider-strong: rgba(245, 200, 140, 0.2);
+  --color-divider-bold: rgba(245, 200, 140, 0.34);
+
+  --color-info-bg: rgba(125, 211, 252, 0.16);
+  --color-info-fg: #7dd3fc;
+  --color-info-border: rgba(125, 211, 252, 0.32);
+  --color-success-bg: rgba(134, 239, 172, 0.16);
+  --color-success-fg: #86efac;
+  --color-success-border: rgba(134, 239, 172, 0.32);
+  --color-warning-bg: rgba(253, 186, 116, 0.18);
+  --color-warning-fg: #fdba74;
+  --color-warning-border: rgba(253, 186, 116, 0.34);
+  --color-danger-bg: rgba(248, 113, 113, 0.16);
+  --color-danger-fg: #fca5a5;
+  --color-danger-border: rgba(248, 113, 113, 0.32);
+  --color-mark: rgba(251, 191, 36, 0.3);
+
+  --color-brand: #f59e0b;
+  --color-brand-strong: #fbbf24;
+  --color-brand-soft: rgba(245, 158, 11, 0.16);
+  --color-brand-hover: rgba(245, 158, 11, 0.26);
+  --color-brand-border: rgba(245, 158, 11, 0.36);
+  --color-prose-body: #e6d5c0;
+  --color-prose-heading: #faf0e2;
+  --color-prose-muted: #b09a80;
+  --color-prose-link: #fbbf24;
+  --color-prose-code: #f0e0cc;
+  --color-prose-border: rgba(245, 200, 140, 0.22);
+  --color-hljs-bg: #221a15;
+  --color-hljs-fg: #e6d5c0;
+}

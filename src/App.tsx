@@ -5,6 +5,9 @@ import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import logo from "./assets/logo.png";
+import neonBg from "./assets/themes/neon.jpg";
+import twilightBg from "./assets/themes/twilight.jpg";
+import amberBg from "./assets/themes/amber.jpg";
 import ReaderView from "./ReaderView";
 import SettingsView from "./SettingsView";
 import NotesView from "./NotesView";
@@ -32,10 +35,16 @@ export type ThemePreset =
   | "blue-topaz"
   | "catppuccin"
   | "neon"
-  | "twilight";
+  | "twilight"
+  | "amber";
 
-/** 带主页氛围层的主题：只在文献库页铺装饰，其它栏目仅继承色调 token */
-const AMBIENT_THEMES: ThemePreset[] = ["neon", "twilight"];
+/** 带主页氛围的主题：id → 本页背景图。
+ *  氛围层只铺在文献库（列表）页，阅读/笔记/设置等栏目仅继承色调 token。 */
+const AMBIENT_THEMES: Partial<Record<ThemePreset, string>> = {
+  neon: neonBg,
+  twilight: twilightBg,
+  amber: amberBg,
+};
 
 const THEME_PRESETS: { id: ThemePreset; name: string }[] = [
   { id: "default", name: "默认" },
@@ -45,6 +54,7 @@ const THEME_PRESETS: { id: ThemePreset; name: string }[] = [
   { id: "catppuccin", name: "Catppuccin" },
   { id: "neon", name: "Neon" },
   { id: "twilight", name: "Twilight" },
+  { id: "amber", name: "Amber" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -218,6 +228,8 @@ function App() {
     const saved = localStorage.getItem("theme-preset");
     return THEME_PRESETS.some((p) => p.id === saved) ? (saved as ThemePreset) : "default";
   });
+  // 当前是否要在文献库页铺氛围背景图（仅带图的主题 + 列表页才有值）
+  const ambientBg = tab === "文献库" ? AMBIENT_THEMES[themePreset] : undefined;
 
   const openReader = (doc: Doc) => {
     if (doc.status === "parsed" || doc.status === "translated") setView({ type: "reader", doc });
@@ -548,7 +560,9 @@ function App() {
 
   return (
     <div
-      className={`flex h-full flex-col bg-canvas text-primary ${
+      className={`flex h-full flex-col text-primary ${
+        ambientBg ? "" : "bg-canvas"
+      } ${
         dragging ? "ring-2 ring-inset ring-primary/40" : ""
       }`}
     >
@@ -562,7 +576,11 @@ function App() {
       ) : (
         <>
           {/* 顶栏 */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider bg-panel px-6">
+      <header
+        className={`flex h-14 shrink-0 items-center justify-between border-b border-divider px-6 ${
+          ambientBg ? "bg-panel/70 backdrop-blur-xl" : "bg-panel"
+        }`}
+      >
         <div className="flex items-center gap-3">
           <img
             src={logo}
@@ -661,18 +679,11 @@ function App() {
       <main className="flex-1 overflow-y-auto p-6">
         {/* 氛围层：只作用于文献库（列表）页，仅带氛围的主题会铺。
             阅读、笔记、设置等栏目只继承主题的色调 token，不铺这层装饰 */}
-        {tab === "文献库" && AMBIENT_THEMES.includes(themePreset) && (
-          <div className="pointer-events-none fixed inset-0 -z-10">
-            <div
-              className={`absolute inset-0 ${
-                themePreset === "neon" ? "neon-aurora" : "twilight-aurora"
-              }`}
-            />
-            <div
-              className={`absolute inset-0 ${
-                themePreset === "neon" ? "neon-grid" : "twilight-dots"
-              }`}
-            />
+        {ambientBg && (
+          <div className="pointer-events-none fixed inset-0 z-0">
+            <img src={ambientBg} alt="" className="h-full w-full object-cover" />
+            {/* 减淡背景图保证前景可读；底色取自主题 token，深浅色自动适配 */}
+            <div className="absolute inset-0 bg-canvas/75" />
           </div>
         )}
         <div key={tab} className="anim-fade-in h-full">
