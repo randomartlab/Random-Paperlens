@@ -962,11 +962,45 @@ fn write_setting(conn: &Connection, key: &str, value: &str) -> Result<(), String
 }
 
 /// 从 settings 表读取视觉模型配置（可选外挂，用于图片识别）
+///
+/// 未单独配置时回退到默认 API 配置——主模型若自带视觉能力（GLM-4V、GPT-4o、
+/// Claude、Qwen-VL 等），就不必让用户再填一遍；若主模型是纯文本模型，
+/// 识图调用会失败并被逐张跳过（[`analyze_images`] 内部容错），不影响主流程。
 fn read_vision_config(conn: &Connection) -> VisionConfig {
-    VisionConfig {
-        base_url: read_setting(conn, "vision_base_url"),
-        api_key: read_setting(conn, "vision_api_key"),
-        model: read_setting(conn, "vision_model"),
+    let base_url = read_setting(conn, "vision_base_url");
+    let api_key = read_setting(conn, "vision_api_key");
+    let model = read_setting(conn, "vision_model");
+    if !base_url.trim().is_empty() && !api_key.trim().is_empty() && !model.trim().is_empty() {
+        return VisionConfig {
+            base_url,
+            api_key,
+            model,
+        };
+    }
+
+    // 回退：翻译/拆解使用的默认 API 配置
+    let fallback = conn
+        .query_row(
+            "SELECT base_url, COALESCE(key_ref, ''), COALESCE(model, '') FROM api_configs WHERE is_default = 1 LIMIT 1",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .ok();
+    match fallback {
+        Some((b, k, m)) if !b.trim().is_empty() && !k.trim().is_empty() && !m.trim().is_empty() => {
+            VisionConfig {
+                base_url: b,
+                api_key: k,
+                model: m,
+            }
+        }
+        _ => VisionConfig::default(),
     }
 }
 
