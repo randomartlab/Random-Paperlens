@@ -61,7 +61,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build -- --bundles dmg --target ${{ matrix.target }}
+        # 必须包含 app bundle：macOS 的更新产物（.app.tar.gz）由它产出，只打 dmg 不会有
+        run: npm run tauri build -- --bundles app,dmg --target ${{ matrix.target }}
 
       - name: 归档产物（统一为 ASCII 文件名）
         shell: bash
@@ -70,8 +71,9 @@ jobs:
           V=$(node -p "require('./package.json').version")
           D="src-tauri/target/${{ matrix.target }}/release/bundle"
           cp "$D"/dmg/*.dmg "out/litdesk_${V}_${{ matrix.arch }}.dmg"
-          cp "$D"/macos/*.app.tar.gz "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz"
-          cp "$D"/macos/*.app.tar.gz.sig "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz.sig"
+          # 更新产物的落盘路径随 Tauri 版本有差异，用 find 定位更稳
+          find "$D" -name "*.app.tar.gz" -exec cp {} "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz" \;
+          find "$D" -name "*.app.tar.gz.sig" -exec cp {} "out/litdesk_${V}_${{ matrix.arch }}.app.tar.gz.sig" \;
           ls -lh out
 
       - name: 上传产物
@@ -130,9 +132,8 @@ jobs:
           mkdir -p out
           V=$(node -p "require('./package.json').version")
           D="src-tauri/target/release/bundle/nsis"
-          cp "$D"/*.exe "out/litdesk_${V}_x64-setup.exe"
-          cp "$D"/*.nsis.zip "out/litdesk_${V}_x64-setup.nsis.zip"
-          cp "$D"/*.nsis.zip.sig "out/litdesk_${V}_x64-setup.nsis.zip.sig"
+          cp "$D"/*-setup.exe "out/litdesk_${V}_x64-setup.exe"
+          cp "$D"/*-setup.exe.sig "out/litdesk_${V}_x64-setup.exe.sig"
           ls -lh out
 
       - name: 上传产物

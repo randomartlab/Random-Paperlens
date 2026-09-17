@@ -1,4 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import logo from "./assets/logo.png";
 
 interface Props {
   onClose: () => void;
@@ -77,9 +78,12 @@ function HelpView({ onClose }: Props) {
       <div className="anim-slide-up flex h-full max-h-[720px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-divider bg-canvas shadow-2xl">
         <header className="flex shrink-0 items-center justify-between border-b border-divider bg-panel px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-inverse">
-              Rd
-            </div>
+            <img
+              src={logo}
+              alt="Paperlens"
+              className="h-8 w-auto select-none"
+              draggable={false}
+            />
             <div>
               <h1 className="text-[15px] font-semibold tracking-tight">使用帮助</h1>
               <p className="text-[11px] text-primary/45">Rd学术阅读器 · 快速上手与配置指南</p>

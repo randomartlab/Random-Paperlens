@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
+import logo from "./assets/logo.png";
 import ReaderView from "./ReaderView";
 import SettingsView from "./SettingsView";
 import NotesView from "./NotesView";
@@ -551,12 +552,20 @@ function App() {
           {/* 顶栏 */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider bg-panel px-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-inverse">
-            Rd
+          <img
+            src={logo}
+            alt="Paperlens"
+            className="h-8 w-auto select-none"
+            draggable={false}
+          />
+          <div className="flex flex-col leading-tight">
+            <h1 className="text-[15px] font-semibold tracking-tight">
+              Rd学术阅读器
+            </h1>
+            <span className="text-[10px] tracking-wide text-primary/40">
+              Random Paperlens
+            </span>
           </div>
-          <h1 className="text-[15px] font-semibold tracking-tight">
-            Rd学术阅读器
-          </h1>
           <span
             className="rounded-full bg-primary/5 px-2.5 py-0.5 text-xs text-primary/60"
             title="当前运行版本（取自应用元数据，非硬编码）"

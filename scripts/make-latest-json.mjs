@@ -65,14 +65,14 @@ for (const [key, archHint] of [
   platforms[key] = { signature, url: `${downloadBase}/${basename(archive)}` };
 }
 
-// Windows：更新产物为 .nsis.zip
-const nsisZip = files.find((f) => f.endsWith(".nsis.zip"));
-if (nsisZip) {
-  const signature = sigFor(nsisZip);
+// Windows：Tauri v2 直接以 NSIS 安装包及其签名为更新产物（不再产出 .nsis.zip）
+const winSetup = files.find((f) => f.endsWith("-setup.exe"));
+if (winSetup) {
+  const signature = sigFor(winSetup);
   if (signature) {
     platforms["windows-x86_64"] = {
       signature,
-      url: `${downloadBase}/${basename(nsisZip)}`,
+      url: `${downloadBase}/${basename(winSetup)}`,
     };
   }
 }

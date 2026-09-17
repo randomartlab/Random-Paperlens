@@ -180,11 +180,17 @@ npm run build            # 前端类型检查 + 构建
 npm run tauri build      # 桌面应用打包
 ```
 
-macOS 双架构：
+macOS 双架构（`app,dmg` 都要：app bundle 才能产出应用内更新所需的更新包）：
 
 ```bash
-npm run tauri build -- --bundles dmg --target aarch64-apple-darwin
-npm run tauri build -- --bundles dmg --target x86_64-apple-darwin
+npm run tauri build -- --bundles app,dmg --target aarch64-apple-darwin
+npm run tauri build -- --bundles app,dmg --target x86_64-apple-darwin
+```
+
+发布打包需要签名密钥（否则不生成更新产物）：
+
+```bash
+TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/litdesk.key npm run tauri build -- --bundles app,dmg
 ```
 
 Windows（需在 Windows 上执行，NSIS 必需显式指定）：
