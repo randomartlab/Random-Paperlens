@@ -825,3 +825,106 @@ html.theme-transition *::after {
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 78%);
   -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 78%);
 }
+
+/* ---- Twilight（深紫暮色 + 银白）---- */
+:root[data-theme="twilight"] {
+  color-scheme: light;
+
+  --color-canvas: #f7f3fb;
+  --color-panel: #ffffff;
+  --color-surface: #faf7fd;
+  --color-hover: rgba(124, 58, 173, 0.06);
+  --color-track: rgba(124, 58, 173, 0.07);
+  --color-primary: #2a1b3d;
+  --color-primary-inverse: #ffffff;
+  --color-divider: rgba(124, 58, 173, 0.1);
+  --color-divider-strong: rgba(124, 58, 173, 0.18);
+  --color-divider-bold: rgba(124, 58, 173, 0.32);
+
+  --color-info-bg: rgba(37, 99, 235, 0.1);
+  --color-info-fg: #2563eb;
+  --color-info-border: rgba(37, 99, 235, 0.24);
+  --color-success-bg: rgba(13, 148, 136, 0.1);
+  --color-success-fg: #0d9488;
+  --color-success-border: rgba(13, 148, 136, 0.24);
+  --color-warning-bg: rgba(180, 83, 9, 0.12);
+  --color-warning-fg: #b45309;
+  --color-warning-border: rgba(180, 83, 9, 0.26);
+  --color-danger-bg: rgba(190, 24, 93, 0.1);
+  --color-danger-fg: #be185d;
+  --color-danger-border: rgba(190, 24, 93, 0.24);
+  --color-mark: rgba(192, 38, 211, 0.16);
+
+  --color-brand: #9333ea;
+  --color-brand-strong: #7e22ce;
+  --color-brand-soft: rgba(147, 51, 234, 0.1);
+  --color-brand-hover: rgba(147, 51, 234, 0.16);
+  --color-brand-border: rgba(147, 51, 234, 0.28);
+  --color-prose-body: #38264f;
+  --color-prose-heading: #2a1b3d;
+  --color-prose-muted: #6f5b8c;
+  --color-prose-link: #9333ea;
+  --color-prose-code: #2a1b3d;
+  --color-prose-border: rgba(124, 58, 173, 0.18);
+  --color-hljs-bg: #f5f0fa;
+  --color-hljs-fg: #38264f;
+}
+
+.dark[data-theme="twilight"] {
+  color-scheme: dark;
+
+  --color-canvas: #17111f;
+  --color-panel: #1e1729;
+  --color-surface: #221a30;
+  --color-hover: rgba(216, 180, 254, 0.08);
+  --color-track: rgba(216, 180, 254, 0.1);
+  --color-primary: #ece4f5;
+  --color-primary-inverse: #17111f;
+  --color-divider: rgba(216, 180, 254, 0.12);
+  --color-divider-strong: rgba(216, 180, 254, 0.2);
+  --color-divider-bold: rgba(216, 180, 254, 0.34);
+
+  --color-info-bg: rgba(125, 211, 252, 0.16);
+  --color-info-fg: #7dd3fc;
+  --color-info-border: rgba(125, 211, 252, 0.32);
+  --color-success-bg: rgba(94, 234, 212, 0.16);
+  --color-success-fg: #5eead4;
+  --color-success-border: rgba(94, 234, 212, 0.32);
+  --color-warning-bg: rgba(253, 186, 116, 0.16);
+  --color-warning-fg: #fdba74;
+  --color-warning-border: rgba(253, 186, 116, 0.32);
+  --color-danger-bg: rgba(244, 114, 182, 0.16);
+  --color-danger-fg: #f472b6;
+  --color-danger-border: rgba(244, 114, 182, 0.32);
+  --color-mark: rgba(232, 121, 249, 0.3);
+
+  --color-brand: #e879f9;
+  --color-brand-strong: #f0abfc;
+  --color-brand-soft: rgba(232, 121, 249, 0.16);
+  --color-brand-hover: rgba(232, 121, 249, 0.26);
+  --color-brand-border: rgba(232, 121, 249, 0.36);
+  --color-prose-body: #ded2ec;
+  --color-prose-heading: #f4ecfa;
+  --color-prose-muted: #a292b8;
+  --color-prose-link: #d8b4fe;
+  --color-prose-code: #eaddf8;
+  --color-prose-border: rgba(216, 180, 254, 0.22);
+  --color-hljs-bg: #1c1526;
+  --color-hljs-fg: #ded2ec;
+}
+
+/* Twilight 主页氛围：紫色光晕 + 网点（呼应参考图的漫画网点质感）*/
+.twilight-aurora {
+  background:
+    radial-gradient(1000px 520px at 18% -8%, rgba(232, 121, 249, 0.2), transparent 62%),
+    radial-gradient(880px 460px at 84% 4%, rgba(147, 51, 234, 0.24), transparent 60%),
+    radial-gradient(1100px 600px at 50% 108%, rgba(125, 211, 252, 0.1), transparent 62%),
+    linear-gradient(168deg, #17111f 0%, #241a30 48%, #15101d 100%);
+}
+
+.twilight-dots {
+  background-image: radial-gradient(rgba(232, 121, 249, 0.16) 1px, transparent 1px);
+  background-size: 22px 22px, 22px 22px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 80%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 80%);
+}

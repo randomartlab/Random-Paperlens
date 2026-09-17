@@ -84,6 +84,7 @@ const THEME_OPTIONS: { id: ThemePreset; name: string; desc: string; swatches: st
   { id: "blue-topaz", name: "Blue Topaz", desc: "蓝宝石智识感", swatches: ["#202020", "#4a9ade", "#ffffff"] },
   { id: "catppuccin", name: "Catppuccin", desc: "莫兰迪紫，低饱和", swatches: ["#1e1e2e", "#c6a0f6", "#89b4fa"] },
   { id: "neon", name: "Neon", desc: "赛博深蓝紫，主页带氛围层", swatches: ["#0a1428", "#5cc8ff", "#a855f7"] },
+  { id: "twilight", name: "Twilight", desc: "深紫暮色 + 银白，主页带氛围层", swatches: ["#17111f", "#e879f9", "#ece4f5"] },
 ];
 
 function SettingsView({ themePreset, onThemePreset }: { themePreset: ThemePreset; onThemePreset: (preset: ThemePreset) => void }) {
