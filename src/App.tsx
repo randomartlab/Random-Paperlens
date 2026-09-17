@@ -230,6 +230,8 @@ function App() {
   });
   // 当前是否要在文献库页铺氛围背景图（仅带图的主题 + 列表页才有值）
   const ambientBg = tab === "文献库" ? AMBIENT_THEMES[themePreset] : undefined;
+  // 阅读页会整页替换内容，不吃氛围层（否则根容器透明会漏出底层）
+  const showAmbient = Boolean(ambientBg) && view.type !== "reader";
 
   const openReader = (doc: Doc) => {
     if (doc.status === "parsed" || doc.status === "translated") setView({ type: "reader", doc });
@@ -560,12 +562,21 @@ function App() {
 
   return (
     <div
-      className={`flex h-full flex-col text-primary ${
-        ambientBg ? "" : "bg-canvas"
+      className={`relative isolate flex h-full flex-col text-primary ${
+        showAmbient ? "" : "bg-canvas"
       } ${
         dragging ? "ring-2 ring-inset ring-primary/40" : ""
       }`}
     >
+      {/* 氛围层：只作用于文献库（列表）页，且必须是负层级，否则会盖住顶栏与导航。
+          isolate + -z-10 保证它只在本容器内垫底，阅读/笔记/设置页不铺这层装饰 */}
+      {showAmbient && (
+        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          <img src={ambientBg} alt="" className="h-full w-full object-cover" />
+          {/* 减淡背景图保证前景可读；底色取自主题 token，深浅色自动适配 */}
+          <div className="absolute inset-0 bg-canvas/70" />
+        </div>
+      )}
       {view.type === "reader" ? (
         <ReaderView
           docId={view.doc.id}
@@ -638,7 +649,11 @@ function App() {
       </header>
 
       {/* 主导航 */}
-      <nav className="flex h-11 shrink-0 items-center gap-1 border-b border-divider bg-panel px-4 text-sm">
+      <nav
+        className={`flex h-11 shrink-0 items-center gap-1 border-b border-divider px-4 text-sm ${
+          showAmbient ? "bg-panel/60 backdrop-blur-xl" : "bg-panel"
+        }`}
+      >
         {(["文献库", "任务中心", "笔记", "设置"] as const).map((item) => (
           <button
             key={item}
@@ -676,16 +691,7 @@ function App() {
       )}
 
       {/* 内容区 */}
-      <main className="flex-1 overflow-y-auto p-6">
-        {/* 氛围层：只作用于文献库（列表）页，仅带氛围的主题会铺。
-            阅读、笔记、设置等栏目只继承主题的色调 token，不铺这层装饰 */}
-        {ambientBg && (
-          <div className="pointer-events-none fixed inset-0 z-0">
-            <img src={ambientBg} alt="" className="h-full w-full object-cover" />
-            {/* 减淡背景图保证前景可读；底色取自主题 token，深浅色自动适配 */}
-            <div className="absolute inset-0 bg-canvas/75" />
-          </div>
-        )}
+      <main className="relative flex-1 overflow-y-auto p-6">
         <div key={tab} className="anim-fade-in h-full">
         {tab === "设置" ? (
           <SettingsView themePreset={themePreset} onThemePreset={setThemePreset} />
@@ -755,10 +761,20 @@ function App() {
           /* 文献列表 */
           <div className="mx-auto max-w-4xl">
             <div className="mb-4 flex items-center justify-between">
-              <div className="text-sm text-primary/50">
+              <div
+                className={
+                  showAmbient
+                    ? "rounded-full border border-divider bg-panel/70 px-3 py-1 text-sm text-primary/70 backdrop-blur-md"
+                    : "text-sm text-primary/50"
+                }
+              >
                 共 {docs.length} 篇文献
               </div>
-              <div className="flex items-center gap-1 rounded-full border border-divider bg-panel p-0.5 text-xs">
+              <div
+                className={`flex items-center gap-1 rounded-full border border-divider p-0.5 text-xs ${
+                  showAmbient ? "bg-panel/70 backdrop-blur-md" : "bg-panel"
+                }`}
+              >
                 {(
                   [
                     ["all", "全部"],

@@ -37,6 +37,13 @@ static LAST_CRASH: AtomicBool = AtomicBool::new(false);
 /// 避免因"一律取开头 N 字符"导致模型只能输出"引用缺失"。
 const DIGEST_CONTEXT_CHARS: usize = 60000;
 
+/// 应用版本号的唯一来源：Tauri 打包元数据（tauri.conf.json）。
+/// 不要改用 CARGO_PKG_VERSION——它在 src-tauri/Cargo.toml 里另存一份，
+/// 曾出现 Info.plist 已是新版、诊断信息却仍报旧版的口径不一致问题。
+fn app_version<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
+    app.package_info().version.to_string()
+}
+
 /// 全局应用状态：数据库连接（互斥保护，供多命令共享）+ 翻译任务控制标志
 struct AppState {
     conn: Mutex<Connection>,
@@ -2130,7 +2137,7 @@ fn get_diagnostics(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> 
                 return json!({
                     "platform": std::env::consts::OS,
                     "arch": std::env::consts::ARCH,
-                    "version": env!("CARGO_PKG_VERSION"),
+                    "version": app_version(&app),
                     "log_path": log_path,
                     "error": "数据库锁获取失败",
                 })
@@ -2171,7 +2178,7 @@ fn get_diagnostics(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> 
     json!({
         "platform": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": app_version(&app),
         // 当前运行的可执行文件路径：用于确认"实际在跑哪一份安装"，
         // 排查多副本残留、替换未生效等版本问题
         "exe_path": std::env::current_exe()
@@ -2469,7 +2476,7 @@ pub fn run() {
                 // 启动即记录版本与平台：便于事后确认某次运行究竟跑的是哪个构建
                 logging::info(&format!(
                     "应用正常启动 v{}（{} / {}）",
-                    env!("CARGO_PKG_VERSION"),
+                    app.handle().package_info().version,
                     std::env::consts::OS,
                     std::env::consts::ARCH
                 ));
