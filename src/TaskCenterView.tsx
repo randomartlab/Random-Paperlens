@@ -7,7 +7,7 @@ interface TaskItem {
   doc_id: string;
   title: string;
   type: string;
-  status: "running" | "done" | "failed";
+  status: "running" | "queued" | "done" | "failed";
   progress: number;
   stage: string;
   detail: string;
@@ -32,6 +32,7 @@ const TYPE_ICON: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   running: "进行中",
+  queued: "已排队",
   done: "已完成",
   failed: "失败",
 };
@@ -101,6 +102,15 @@ export default function TaskCenterView() {
     }
   };
 
+  const handleCancel = async (task: TaskItem) => {
+    try {
+      await invoke("cancel_task", { docId: task.doc_id });
+      setTasks(await invoke<TaskItem[]>("list_tasks"));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const handleDelete = async (task: TaskItem) => {
     try {
       await invoke("delete_task", { taskId: task.id });
@@ -116,9 +126,11 @@ export default function TaskCenterView() {
     const cls =
       status === "running"
         ? "bg-info-bg text-info-fg"
-        : status === "done"
-          ? "bg-success-bg text-success-fg"
-          : "bg-danger-bg text-danger-fg";
+        : status === "queued"
+          ? "bg-warning-bg text-warning-fg"
+          : status === "done"
+            ? "bg-success-bg text-success-fg"
+            : "bg-danger-bg text-danger-fg";
     return (
       <span className={`rounded-full px-2.5 py-0.5 text-xs ${cls}`}>
         {STATUS_LABEL[status] ?? status}
@@ -186,6 +198,7 @@ export default function TaskCenterView() {
           [
             ["all", "全部"],
             ["running", "进行中"],
+            ["queued", "已排队"],
             ["done", "已完成"],
             ["failed", "失败"],
           ] as [TaskFilter, string][]
@@ -278,6 +291,19 @@ export default function TaskCenterView() {
                 )}
               </div>
               {progressBar(task)}
+              {(task.status === "running" || task.status === "queued") && (
+                <button
+                  onClick={() => void handleCancel(task)}
+                  title={
+                    task.status === "queued"
+                      ? "取消排队"
+                      : "取消任务（已完成的段落会保留）"
+                  }
+                  className="rounded-md border border-divider-strong px-2.5 py-1 text-[11px] text-primary/60 transition-colors hover:border-danger-border hover:bg-danger-bg hover:text-danger-fg"
+                >
+                  {task.status === "queued" ? "取消排队" : "取消"}
+                </button>
+              )}
               {(task.status === "done" || task.status === "failed") && (
                 <button
                   onClick={() => void handleDelete(task)}

@@ -23,6 +23,13 @@ pub struct DigestFieldResult {
     pub en: String,          // 英文拆解（双语对照）
     pub table: Option<String>, // 表格类字段的 Markdown 表格（中英共用）
     pub failed: bool,        // 该字段拆解失败（占位而非编造）
+    /// 失败原因分类：config（凭据/Base URL/模型名）/ network / llm / internal。
+    /// 旧数据没有这个字段，反序列化时取默认值，保持兼容。
+    #[serde(default)]
+    pub error_category: String,
+    /// 失败原因原文（面向用户：说明是哪个环节、怎么处理）
+    #[serde(default)]
+    pub error_message: String,
 }
 
 /// 带编号的上下文条目（供按字段检索）
@@ -222,17 +229,129 @@ pub fn build_field_user(field: &FieldDef, context: &str) -> String {
     } else {
         String::new()
     };
+    // 列表类字段：要求输出数组，一个条目一个元素（此前只要求字符串，模型常把条目挤成一行）
+    let (zh_tpl, en_tpl, list_rule) = if field.ftype == "list[string]" {
+        (
+            "[\"条目一，内联标注 [段落 N]\", \"条目二，内联标注 [段落 N]\"]",
+            "[\"item one with [Paragraph N]\", \"item two with [Paragraph N]\"]",
+            "\n列表类字段：zh 与 en 都必须输出数组，一个条目一个元素，不要把多个条目塞进同一个字符串；\
+             每个条目里仍要内联标注 [段落 N]。",
+        )
+    } else {
+        (
+            "\"中文拆解，必须内联标注所依据的原文段落，格式 [段落 N]（至少一处；无法定位时只输出 引用缺失）\"",
+            "\"英文拆解，与 zh 内容一一对应\"",
+            "",
+        )
+    };
     format!(
         "【文献内容】（段落编号用于引用锚定）\n{context}\n\n【待拆解字段】\n\
-         字段：{label}\n说明：{desc}\n类型：{ftype} → {type_hint}{enum_hint}\n\n\
+         字段：{label}\n说明：{desc}\n类型：{ftype} → {type_hint}{enum_hint}{list_rule}\n\n\
          【输出格式】严格输出一个 JSON 对象，不要输出任何其他文字：\n\
-         {{\"zh\": \"中文拆解，必须内联标注所依据的原文段落，格式 [段落 N]（至少一处；无法定位时只输出 引用缺失）\", \
-         \"en\": \"英文拆解，与 zh 内容一一对应\", \
+         {{\"zh\": {zh_tpl}, \"en\": {en_tpl}, \
          \"table\": \"仅表格类字段输出 Markdown 表格，其余字段省略此项\"}}",
         label = field.label,
         desc = field.description,
         ftype = field.ftype,
     )
+}
+
+/// 剥掉行首的序号 / 项目符号："一、" "1." "(2)" "①" "-" "•"
+fn strip_item_marker(line: &str) -> String {
+    const CN_ORDINALS: [char; 10] = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+    const CIRCLED: [char; 10] = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+
+    let t = line.trim_start();
+    for b in ['-', '*', '•', '·', '–'] {
+        if let Some(rest) = t.strip_prefix(b) {
+            return rest.trim_start().to_string();
+        }
+    }
+    let chars: Vec<char> = t.chars().collect();
+    if let Some(c) = chars.first() {
+        if CIRCLED.contains(c) {
+            return chars[1..].iter().collect::<String>().trim_start().to_string();
+        }
+    }
+    // (1) / （一） / [1]
+    if let Some(first) = chars.first() {
+        if matches!(first, '(' | '（' | '[' | '【') {
+            let close = match first {
+                '(' => ')',
+                '（' => '）',
+                '[' => ']',
+                _ => '】',
+            };
+            if let Some(pos) = chars.iter().position(|c| *c == close) {
+                let inner: String = chars[1..pos].iter().collect();
+                let ok = !inner.is_empty()
+                    && inner
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || CN_ORDINALS.contains(&c));
+                if ok && pos + 1 < chars.len() {
+                    return chars[pos + 1..]
+                        .iter()
+                        .collect::<String>()
+                        .trim_start()
+                        .to_string();
+                }
+            }
+        }
+    }
+    // 一、 / 1. / 1、 / 1)
+    let mut i = 0;
+    while matches!(chars.get(i), Some(c) if CN_ORDINALS.contains(c) || c.is_ascii_digit()) {
+        i += 1;
+    }
+    if i > 0 && matches!(chars.get(i), Some('、') | Some('.') | Some('．') | Some(')') | Some('）'))
+    {
+        // 章节号（如 2.1）不当作条目序号：分隔符后面若还是数字则原样保留
+        let next_is_digit = matches!(chars.get(i + 1), Some(c) if c.is_ascii_digit());
+        if !next_is_digit {
+            return chars[i + 1..]
+                .iter()
+                .collect::<String>()
+                .trim_start()
+                .to_string();
+        }
+    }
+    t.to_string()
+}
+
+/// 统计以条目序号开头的片段数（按分号切分判断）
+fn count_ordinal_markers(text: &str) -> usize {
+    text.split(['；', ';'])
+        .filter(|seg| {
+            let s = seg.trim();
+            !s.is_empty() && strip_item_marker(s) != s
+        })
+        .count()
+}
+
+/// 列表类字段的兜底整理：模型有时把多个条目塞进一行
+/// （如"一、关键词A [段落 3]；二、关键词B [段落 5]"），这里拆成一行一条，
+/// 并统一剥掉行首序号/项目符号，保证前端按条目逐条渲染。
+fn normalize_list_text(text: &str) -> String {
+    let t = text.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    let citation_marks = t.matches("[段落").count() + t.matches("[Paragraph").count();
+    let ordinals = count_ordinal_markers(t);
+
+    // 只有在"确实像多条挤在一起"时才按分号拆；否则保持原样
+    let pieces: Vec<&str> = if !t.contains('\n') && (citation_marks >= 2 || ordinals >= 2) {
+        t.split(['；', ';']).collect()
+    } else {
+        t.lines().collect()
+    };
+
+    pieces
+        .iter()
+        .map(|l| strip_item_marker(l))
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 将 JSON 值转为展示文本：字符串直接取；数组逐项拼接；对象取常用文本字段
@@ -281,8 +400,13 @@ fn parse_digest_response(raw: &str, ftype: &str) -> (String, String, Option<Stri
         .trim_end_matches("```")
         .trim();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(cleaned) {
-        let zh = json_value_text(&v["zh"]).unwrap_or_default();
-        let en = json_value_text(&v["en"]).unwrap_or_default();
+        let mut zh = json_value_text(&v["zh"]).unwrap_or_default();
+        let mut en = json_value_text(&v["en"]).unwrap_or_default();
+        // 列表类字段兜底：模型偶尔把多个条目挤成一行，统一整理成一条一行
+        if ftype == "list[string]" {
+            zh = normalize_list_text(&zh);
+            en = normalize_list_text(&en);
+        }
         let table = if ftype == "table" {
             json_value_text(&v["table"])
         } else {
@@ -293,6 +417,25 @@ fn parse_digest_response(raw: &str, ftype: &str) -> (String, String, Option<Stri
         }
     }
     (raw.trim().to_string(), String::new(), None)
+}
+
+/// 上游凭据/配置类错误：一旦出现，后续字段必然同样失败，应立即中止并明确告知用户，
+/// 而不是把每个字段都跑一遍、留下一片"引用缺失"，让人误以为是软件功能坏了。
+pub fn is_credential_error(e: &TranslateError) -> bool {
+    if e.category == "config" {
+        return true;
+    }
+    let m = &e.message;
+    m.contains("401")
+        || m.contains("403")
+        || m.contains("API Key")
+        || m.contains("api key")
+        || m.contains("API key")
+        || m.contains("鉴权")
+        || m.contains("无效")
+        || m.contains("未授权")
+        || m.contains("Unauthorized")
+        || m.contains("invalid_api_key")
 }
 
 /// 中文拆解是否含段落引用（或已声明引用缺失）
@@ -402,5 +545,37 @@ mod tests {
         let nos: Vec<usize> = segs.iter().filter_map(|s| s.no).collect();
         assert_eq!(nos, vec![1, 2, 3]);
         assert!(segs.iter().any(|s| s.heading.as_deref() == Some("2. Methods")));
+    }
+
+    #[test]
+    fn list_field_splits_packed_items() {
+        // 模型把多个条目挤成一行时的兜底拆分
+        let packed = "一、关键词A [段落 3]；二、关键词B [段落 5]";
+        assert_eq!(
+            normalize_list_text(packed),
+            "关键词A [段落 3]\n关键词B [段落 5]"
+        );
+    }
+
+    #[test]
+    fn list_field_keeps_lines_and_strips_bullets() {
+        let multi = "- 人工智能（Artificial intelligence）[段落14]\n- 虚拟现实（Virtual reality）[段落14]";
+        assert_eq!(
+            normalize_list_text(multi),
+            "人工智能（Artificial intelligence）[段落14]\n虚拟现实（Virtual reality）[段落14]"
+        );
+    }
+
+    #[test]
+    fn list_field_keeps_single_item_untouched() {
+        assert_eq!(normalize_list_text("只有一个关键词"), "只有一个关键词");
+    }
+
+    #[test]
+    fn list_field_does_not_strip_section_numbers() {
+        // 章节号（2.1）不能被当成条目序号剥掉
+        assert_eq!(strip_item_marker("2.1 研究方法"), "2.1 研究方法");
+        assert_eq!(strip_item_marker("1. 研究问题"), "研究问题");
+        assert_eq!(strip_item_marker("（2）研究方法"), "研究方法");
     }
 }

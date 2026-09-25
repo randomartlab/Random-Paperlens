@@ -51,6 +51,10 @@ struct AppState {
     /// 内部可变，故用 Mutex 包裹
     mineru: Mutex<Option<MinerUClient>>,
     translation_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// 每篇文献的任务槽：同篇串行 + 排队（跨篇互不影响，仍可并行）
+    task_slots: Mutex<HashMap<String, TaskSlot>>,
+    /// 每篇文献的取消标志：置位后任务在下一个段/字段边界收尾
+    task_cancel: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 /// 任务中心行（不包含任何密钥信息）
@@ -674,14 +678,48 @@ fn read_bilingual(doc_id: String, app: tauri::AppHandle) -> Result<Vec<Bilingual
     Ok(pairs)
 }
 
-/// 启动全文翻译任务（异步）：分段切分 → 并发翻译 → 断点续传 → 拼接保存
+/// 启动全文翻译任务：分段切分 → 并发翻译 → 断点续传 → 拼接保存
 /// direction: "en_to_zh"（英文文献→中文，默认）/ "zh_to_en"（中文文献→英文）
+///
+/// 同篇串行：若这篇已有任务在跑，本次会排队（返回 `queued`），当前任务结束后自动接上。
 #[tauri::command]
 fn start_translate(
     doc_id: String,
     direction: String,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    match reserve_slot(
+        &state,
+        &doc_id,
+        TaskKind::Translate {
+            direction: direction.clone(),
+        },
+    )? {
+        SlotDecision::Queued => {
+            let _ = app.emit(
+                "task-queued",
+                json!({ "doc_id": doc_id, "kind": "translate" }),
+            );
+            Ok(json!({ "state": "queued" }))
+        }
+        SlotDecision::Start => match spawn_translate(doc_id.clone(), direction, &state, &app) {
+            Ok(()) => Ok(json!({ "state": "started" })),
+            Err(e) => {
+                // 启动阶段就失败：立刻释放槽位，并把排队任务接上
+                finish_slot_and_kick(&app, &doc_id);
+                Err(e)
+            }
+        },
+    }
+}
+
+/// 翻译任务的准备与启动（命令与排队接龙共用）
+fn spawn_translate(
+    doc_id: String,
+    direction: String,
+    state: &AppState,
+    app: &tauri::AppHandle,
 ) -> Result<(), String> {
     // 1. 读取默认 API 配置（含明文 Key）
     let (base_url, api_key, model) = {
@@ -768,6 +806,16 @@ fn start_translate(
     }
     let app2 = app.clone();
     std::thread::spawn(move || {
+        // 任务槽守卫：线程结束（成功 / 失败 / 取消 / panic）时释放槽位并接上排队任务
+        let _slot = SlotGuard {
+            doc_id: doc_id.clone(),
+            app: app2.clone(),
+        };
+        // 注册取消标志：任务在每个新段前检查
+        let cancel = {
+            let st = app2.state::<AppState>();
+            register_cancel(&st, &doc_id)
+        };
         let emit = |event: &str, payload: serde_json::Value| {
             let _ = app2.emit(event, payload);
         };
@@ -861,10 +909,18 @@ fn start_translate(
                     }),
                 );
             };
-            translate_batch(&translator, &mut pending_mut, 3, Some(ctrl.as_ref()), &mut cb)
+            translate_batch(
+                &translator,
+                &mut pending_mut,
+                3,
+                Some(ctrl.as_ref()),
+                Some(cancel.as_ref()),
+                &mut cb,
+            )
         };
 
         let translate_ok = result.is_ok();
+        let cancelled_run = matches!(&result, Err(e) if e.is_cancelled());
 
         match result {
             Ok(()) => {
@@ -914,38 +970,58 @@ fn start_translate(
                 }
             }
             Err(e) => {
-                // 已完成的段已通过断点续传落盘（在回调中未落盘，故在此持久化已翻译的段）
+                // 已完成的段按段落盘（回调里逐段写入），这里再落一次保证一致
                 let _ = std::fs::write(
                     &seg_path,
                     serde_json::to_string(&done_map).unwrap_or_default(),
                 );
-                let code = error_code::from_translate_category(&e.category);
-                logging::error(&format!("翻译失败 doc={doc_id} [{code}]: {}", e.message));
                 let progress = done_count.load(std::sync::atomic::Ordering::SeqCst) as f64 / total as f64;
-                let msg = format!("[{code}] {}", e.message);
-                update_task("failed", progress, "翻译失败", &msg, Some(&msg));
-                let mut err_val = serde_json::to_value(&e).unwrap_or_default();
-                if let Some(obj) = err_val.as_object_mut() {
-                    obj.insert("code".to_string(), json!(code));
+                if e.is_cancelled() {
+                    // 取消不是失败：不弹错误框；已完成段落保留，可再次点击继续
+                    logging::info(&format!(
+                        "翻译已取消 doc={doc_id}，完成 {:.0}%",
+                        progress * 100.0
+                    ));
+                    update_task("failed", progress, "已取消", "已完成的段落会保留，可继续", None);
+                    emit(
+                        "translate-cancelled",
+                        json!({ "doc_id": doc_id, "progress": progress }),
+                    );
+                } else {
+                    let code = error_code::from_translate_category(&e.category);
+                    logging::error(&format!("翻译失败 doc={doc_id} [{code}]: {}", e.message));
+                    let msg = format!("[{code}] {}", e.message);
+                    update_task("failed", progress, "翻译失败", &msg, Some(&msg));
+                    let mut err_val = serde_json::to_value(&e).unwrap_or_default();
+                    if let Some(obj) = err_val.as_object_mut() {
+                        obj.insert("code".to_string(), json!(code));
+                    }
+                    emit("translate-failed", json!({ "doc_id": doc_id, "error": err_val }));
                 }
-                emit("translate-failed", json!({ "doc_id": doc_id, "error": err_val }));
             }
         }
 
-        // 任务结束，移除控制标志（释放暂停/继续入口）
-        if let Ok(mut controls) = app2.state::<AppState>().translation_controls.lock() {
-            controls.remove(&doc_id);
+        // 任务结束，移除控制标志（释放暂停/继续入口）与取消标志
+        {
+            let st = app2.state::<AppState>();
+            if let Ok(mut controls) = st.translation_controls.lock() {
+                controls.remove(&doc_id);
+            }
+            clear_cancel(&st, &doc_id);
         }
 
-        // 统计：翻译成功记 Translate，失败记 Error（仅统计开启时生效）
-        stats::record(
-            if translate_ok {
-                stats::StatsEvent::Translate
-            } else {
-                stats::StatsEvent::Error
-            },
-            t_translate.elapsed().as_millis() as u64,
-        );
+        // 统计：成功记 Translate，失败记 Error，取消不计（仅统计开启时生效）
+        if translate_ok {
+            stats::record(
+                stats::StatsEvent::Translate,
+                t_translate.elapsed().as_millis() as u64,
+            );
+        } else if !cancelled_run {
+            stats::record(
+                stats::StatsEvent::Error,
+                t_translate.elapsed().as_millis() as u64,
+            );
+        }
     });
 
     Ok(())
@@ -1121,11 +1197,35 @@ fn get_field_plan(
 }
 
 /// 拆解执行（M3.3/3.4）：识别 → 字段方案 → 逐字段 LLM 拆解（引用锚定）→ 持久化 + 版本管理
+///
+/// 同篇串行：若这篇已有任务在跑，本次会排队（返回 `queued`），当前任务结束后自动接上。
 #[tauri::command]
 fn start_digest(
     doc_id: String,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    match reserve_slot(&state, &doc_id, TaskKind::Digest)? {
+        SlotDecision::Queued => {
+            let _ = app.emit("task-queued", json!({ "doc_id": doc_id, "kind": "digest" }));
+            Ok(json!({ "state": "queued" }))
+        }
+        SlotDecision::Start => match spawn_digest(doc_id.clone(), &state, &app) {
+            Ok(()) => Ok(json!({ "state": "started" })),
+            Err(e) => {
+                // 启动阶段就失败：立刻释放槽位，并把排队任务接上
+                finish_slot_and_kick(&app, &doc_id);
+                Err(e)
+            }
+        },
+    }
+}
+
+/// 拆解任务的准备与启动（命令与排队接龙共用）
+fn spawn_digest(
+    doc_id: String,
+    state: &AppState,
+    app: &tauri::AppHandle,
 ) -> Result<(), String> {
     // 1. 读取默认 API 配置 + 术语表
     let (base_url, api_key, model) = {
@@ -1175,6 +1275,16 @@ fn start_digest(
     // 3. 后台线程执行拆解
     let app2 = app.clone();
     std::thread::spawn(move || {
+        // 任务槽守卫：线程结束（成功 / 失败 / 取消 / panic）时释放槽位并接上排队任务
+        let _slot = SlotGuard {
+            doc_id: doc_id.clone(),
+            app: app2.clone(),
+        };
+        // 注册取消标志：任务在每个新字段前检查
+        let cancel = {
+            let st = app2.state::<AppState>();
+            register_cancel(&st, &doc_id)
+        };
         let emit = |event: &str, payload: serde_json::Value| {
             let _ = app2.emit(event, payload);
         };
@@ -1266,7 +1376,18 @@ fn start_digest(
         );
 
         // 3.3 逐字段拆解（每字段一次请求，实时进度 + 增量持久化）
+        let mut cancelled_run = false;
+        // 上游凭据失效：记下原因并中止本轮（不生成新版本）
+        let mut cred_error: Option<(String, String)> = None;
         for (i, fld) in plan.fields.iter().enumerate() {
+            // 取消：不再开始新字段，直接收尾
+            if cancel.load(Ordering::SeqCst) {
+                cancelled_run = true;
+                logging::info(&format!(
+                    "拆解已取消 doc={doc_id}，完成 {i}/{total} 个字段"
+                ));
+                break;
+            }
             let progress = i as f64 / total as f64;
             let detail = format!("{}/{} · {}", i + 1, total, fld.label);
             update_task("running", progress, "拆解中", &detail, None);
@@ -1292,6 +1413,8 @@ fn start_digest(
                         en,
                         table,
                         failed: false,
+                        error_category: String::new(),
+                        error_message: String::new(),
                     });
                     md_out.push_str(&format!("## {}\n\n", fld.label));
                     if !table_block.is_empty() {
@@ -1314,7 +1437,20 @@ fn start_digest(
                         en: "Citation missing".to_string(),
                         table: None,
                         failed: true,
+                        error_category: e.category.clone(),
+                        error_message: e.message.clone(),
                     });
+                    // 凭据/配置类错误：后续字段必然同样失败，立即中止并明确报给用户，
+                    // 避免留下一片"引用缺失"让人误判为软件故障（已完成字段仍会保留）
+                    if digest::is_credential_error(&e) {
+                        cred_error = Some((e.category.clone(), e.message.clone()));
+                        let _ = std::fs::write(
+                            &fields_path,
+                            serde_json::to_string(&results).unwrap_or_default(),
+                        );
+                        let _ = std::fs::write(&digest_md_path, &md_out);
+                        break;
+                    }
                     md_out.push_str(&format!(
                         "## {}\n\n引用缺失（拆解失败：{}）\n\n",
                         fld.label, e.message
@@ -1328,6 +1464,39 @@ fn start_digest(
             // 增量持久化：中断后不丢失已拆解字段
             let _ = std::fs::write(&fields_path, serde_json::to_string(&results).unwrap_or_default());
             let _ = std::fs::write(&digest_md_path, &md_out);
+        }
+
+        // 上游凭据 / 配置失效：明确告诉用户是哪一环出了问题，而不是让他以为软件坏了
+        if let Some((category, message)) = cred_error {
+            let code = error_code::from_translate_category(&category);
+            let done = results.len() as f64 / total as f64;
+            let stage = "上游接口鉴权失败";
+            let detail = format!("[{code}] {message}");
+            logging::error(&format!("拆解中止（上游凭据失效）doc={doc_id} [{code}]: {message}"));
+            update_task("failed", done, stage, &detail, Some(&detail));
+            emit(
+                "digest-failed",
+                json!({
+                    "doc_id": doc_id,
+                    "error": {
+                        "category": category,
+                        "code": code,
+                        "message": message,
+                        "hint": "这不是软件故障：翻译/拆解所用的接口拒绝了这次请求。请到「设置 → API 配置」检查 Base URL、API Key 与模型名，或用「测试连接」验证后重试；解析（MinerU）走的是另一套配置，不受影响。",
+                    }
+                }),
+            );
+            return;
+        }
+
+        // 取消：不生成本次版本（避免把半份结果当完整拆解），也不改文献状态
+        if cancelled_run {
+            let _ = std::fs::remove_file(&fields_path);
+            let _ = std::fs::remove_file(&digest_md_path);
+            let done = results.len() as f64 / total as f64;
+            update_task("failed", done, "已取消", "本次结果未保存，可重新拆解", None);
+            emit("digest-cancelled", json!({ "doc_id": doc_id }));
+            return;
         }
 
         // 3.4 落库 + 状态更新
@@ -1357,6 +1526,8 @@ fn start_digest(
         );
         update_task("done", 1.0, "拆解完成", &format!("v{version} · 共 {total} 个字段"), None);
         stats::record(stats::StatsEvent::Digest, t_digest.elapsed().as_millis() as u64);
+        // 清理取消标志（槽位由 SlotGuard 在退出时释放并接上排队任务）
+        clear_cancel(&app2.state::<AppState>(), &doc_id);
     });
     Ok(())
 }
@@ -1504,6 +1675,8 @@ fn parse_digest_content(content: &str) -> Vec<digest::DigestFieldResult> {
                         en: String::new(),
                         table: None,
                         failed: v["failed"].as_bool().unwrap_or(false),
+                        error_category: String::new(),
+                        error_message: String::new(),
                     })
                 })
                 .collect()
@@ -2044,13 +2217,40 @@ fn test_api_connection(
         .get(&url)
         .header("Authorization", format!("Bearer {final_key}"))
         .send()
-        .map_err(|e| format!("连接失败: {e}"))?;
-    if resp.status().is_success() {
-        let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            // 网络层失败 ≠ 配置错误：先说清是哪一环，再给排查方向
+            let reason = if e.is_timeout() {
+                "请求超时"
+            } else if e.is_connect() {
+                "无法建立连接（域名不可达或被代理拦截）"
+            } else {
+                "网络请求失败"
+            };
+            format!(
+                "网络不可达：{reason}。请检查 Base URL 是否写对（需含 /v1 等路径前缀）、本机网络与代理设置。原始错误：{e}"
+            )
+        })?;
+    let status = resp.status();
+    if status.is_success() {
+        let body: serde_json::Value = resp.json().unwrap_or(serde_json::Value::Null);
         let count = body["data"].as_array().map(|a| a.len()).unwrap_or(0);
-        Ok(format!("连接成功，可用模型 {} 个", count))
+        if count > 0 {
+            Ok(format!("连接成功，可用模型 {count} 个"))
+        } else {
+            Ok("连接成功（服务端未返回模型列表，可继续使用）".to_string())
+        }
     } else {
-        Err(format!("鉴权失败 HTTP {}", resp.status()))
+        // 把上游返回的错误原文带出来：401/403 是 Key 的问题，404 多为路径问题，429 是限流
+        let detail = crate::translate::extract_llm_error_detail(&resp.text().unwrap_or_default())
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        let label = match status.as_u16() {
+            401 => "接口鉴权失败：API Key 无效、已过期或被禁用",
+            403 => "接口拒绝访问：Key 权限不足，或该模型未开通",
+            404 => "接口路径不存在：Base URL 可能少了 /v1 之类的路径前缀",
+            429 => "请求过于频繁：触发上游限流，稍后重试或降低并发",
+            _ => "上游接口返回异常",
+        };
+        Err(format!("{label}。上游返回：{detail}"))
     }
 }
 
@@ -2472,6 +2672,240 @@ fn append_to_note(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // 子模块命令经 #[macro_use] 展开时触发 rustc 的 never-type fallback lint（宏展开噪音，非代码缺陷）
 #[allow(dependency_on_unit_never_type_fallback)]
+/// 应用退出前：把仍在进行 / 排队的任务标记为中断。
+/// 目的：任务不会永远停在「进行中」，用户下次启动能看到真实原因。
+fn mark_active_tasks_interrupted(app: &tauri::AppHandle, reason: &str) {
+    let Some(st) = app.try_state::<AppState>() else {
+        return;
+    };
+    let Ok(conn) = st.conn.lock() else {
+        return;
+    };
+    let now = now_iso();
+    let n = conn
+        .execute(
+            "UPDATE tasks SET status = 'failed', error = ?1, detail = ?1, updated_at = ?2
+             WHERE status IN ('running', 'queued')",
+            rusqlite::params![reason, now],
+        )
+        .unwrap_or(0);
+    if n > 0 {
+        logging::warn(&format!("应用退出：{n} 条进行中/排队的任务已标记为中断"));
+    }
+}
+
+// ============ 同篇任务槽：同篇串行 + 排队（跨篇并行不受影响） ============
+
+/// 任务类型（用于判断同篇冲突）
+#[derive(Clone, PartialEq)]
+enum TaskKind {
+    Translate { direction: String },
+    Digest,
+}
+
+impl TaskKind {
+    fn label(&self) -> &'static str {
+        match self {
+            TaskKind::Translate { .. } => "翻译",
+            TaskKind::Digest => "拆解",
+        }
+    }
+    fn db_kind(&self) -> &'static str {
+        match self {
+            TaskKind::Translate { .. } => "translate",
+            TaskKind::Digest => "digest",
+        }
+    }
+}
+
+/// 单篇文献的任务槽：同时只跑一个任务，冲突的任务排队等待
+#[derive(Default)]
+struct TaskSlot {
+    running: Option<TaskKind>,
+    queued: Option<(TaskKind, String)>, // (排队任务, 占位任务记录 id)
+}
+
+/// 占用任务槽的结果
+enum SlotDecision {
+    Start,
+    Queued,
+}
+
+/// 尝试占用任务槽：
+/// - 空闲 → 直接开始
+/// - 同类型已在跑 → 拒绝并说明
+/// - 被其他类型占用 → 排队（写一条 queued 任务记录，任务中心可见可取消）
+///
+/// 锁序约定：先 `task_slots` 再 `conn`，全文件保持同一顺序，避免死锁。
+fn reserve_slot(state: &AppState, doc_id: &str, kind: TaskKind) -> Result<SlotDecision, String> {
+    let mut slots = state.task_slots.lock().map_err(|e| e.to_string())?;
+    let slot = slots.entry(doc_id.to_string()).or_default();
+
+    if let Some(running) = slot.running.clone() {
+        if running == kind {
+            return Err(format!(
+                "这篇正在{}，等它跑完再试；也可以在任务中心取消",
+                running.label()
+            ));
+        }
+        if let Some((queued, _)) = &slot.queued {
+            if *queued == kind {
+                return Err(format!(
+                    "这篇已经排了{}的队，当前{}结束后会自动开始",
+                    queued.label(),
+                    running.label()
+                ));
+            }
+        }
+        let task_id = uuid::Uuid::new_v4().to_string();
+        {
+            let conn = state.conn.lock().map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO tasks (id, doc_id, type, status, progress, stage, detail, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'queued', 0, '已排队', ?4, ?5, ?5)",
+                rusqlite::params![
+                    task_id,
+                    doc_id,
+                    kind.db_kind(),
+                    format!("等{}完成后自动开始", running.label()),
+                    now_iso()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        slot.queued = Some((kind, task_id));
+        return Ok(SlotDecision::Queued);
+    }
+
+    slot.running = Some(kind);
+    Ok(SlotDecision::Start)
+}
+
+/// 释放槽位，返回排队中的下一个任务（若有）
+fn release_slot(state: &AppState, doc_id: &str) -> Option<(TaskKind, String)> {
+    let mut slots = state.task_slots.lock().ok()?;
+    let slot = slots.get_mut(doc_id)?;
+    let next = slot.queued.take();
+    slot.running = None;
+    if next.is_none() {
+        slots.remove(doc_id);
+    }
+    next
+}
+
+/// 释放槽位；若有排队任务，后台自动接上。
+/// 命令（启动阶段失败）与任务线程（正常结束/失败）共用这一个入口。
+fn finish_slot_and_kick(app: &tauri::AppHandle, doc_id: &str) {
+    let next = match app.try_state::<AppState>() {
+        Some(st) => release_slot(&st, doc_id),
+        None => None,
+    };
+    let Some((kind, queued_task_id)) = next else {
+        return;
+    };
+    let app2 = app.clone();
+    let doc_id2 = doc_id.to_string();
+    std::thread::spawn(move || {
+        // 占位记录删掉，真实任务会写自己的记录
+        if let Some(st) = app2.try_state::<AppState>() {
+            if let Ok(conn) = st.conn.lock() {
+                let _ = conn.execute("DELETE FROM tasks WHERE id = ?1", [&queued_task_id]);
+            }
+        }
+        logging::info(&format!(
+            "排队任务开始执行 doc={doc_id2} kind={}",
+            kind.db_kind()
+        ));
+        let _ = app2.emit(
+            "task-dequeued",
+            json!({ "doc_id": doc_id2, "kind": kind.db_kind() }),
+        );
+        let st = app2.state::<AppState>();
+        let r = match kind {
+            TaskKind::Translate { direction } => {
+                start_translate(doc_id2.clone(), direction, st, app2.clone())
+            }
+            TaskKind::Digest => start_digest(doc_id2.clone(), st, app2.clone()),
+        };
+        if let Err(e) = r {
+            logging::error(&format!("排队任务启动失败 doc={doc_id2}: {e}"));
+            let _ = app2.emit(
+                "queue-start-failed",
+                json!({ "doc_id": doc_id2, "error": e }),
+            );
+            // 队列已取空，这里不会无限递归
+            finish_slot_and_kick(&app2, &doc_id2);
+        }
+    });
+}
+
+/// 任务槽守卫：任务线程结束（含失败、panic）时自动释放槽位并接上排队任务
+struct SlotGuard {
+    doc_id: String,
+    app: tauri::AppHandle,
+}
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        finish_slot_and_kick(&self.app, &self.doc_id);
+    }
+}
+
+/// 清除取消标志（任务开始时调用，避免上一轮的取消影响本次）
+fn clear_cancel(state: &AppState, doc_id: &str) {
+    if let Ok(mut map) = state.task_cancel.lock() {
+        map.remove(doc_id);
+    }
+}
+
+/// 注册取消标志（任务开始时调用）：返回可在外部置位的标志
+fn register_cancel(state: &AppState, doc_id: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Ok(mut map) = state.task_cancel.lock() {
+        map.insert(doc_id.to_string(), flag.clone());
+    }
+    flag
+}
+
+/// 取消任务：排队的直接出队；运行中的置取消标志，由任务线程在边界收尾。
+/// 已完成的段落/字段都会保留，重新开始时会续跑。
+#[tauri::command]
+fn cancel_task(
+    doc_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    // 1) 排队项：出队 + 记录标记为已取消
+    let queued = {
+        let mut slots = state.task_slots.lock().map_err(|e| e.to_string())?;
+        slots.get_mut(&doc_id).and_then(|s| s.queued.take())
+    };
+    if let Some((kind, task_id)) = queued {
+        if let Ok(conn) = state.conn.lock() {
+            let _ = conn.execute(
+                "UPDATE tasks SET status = 'failed', error = '已取消', detail = '已取消（排队）', updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now_iso(), task_id],
+            );
+        }
+        let _ = app.emit(
+            "task-cancelled",
+            json!({ "doc_id": doc_id, "kind": kind.db_kind(), "queued": true }),
+        );
+        return Ok(json!({ "state": "cancelled-queued" }));
+    }
+
+    // 2) 运行中：置取消标志
+    let flag = {
+        let mut map = state.task_cancel.lock().map_err(|e| e.to_string())?;
+        map.entry(doc_id.clone())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
+    };
+    flag.store(true, Ordering::SeqCst);
+    let _ = app.emit("task-cancelling", json!({ "doc_id": doc_id }));
+    Ok(json!({ "state": "cancelling" }))
+}
+
 pub fn run() {
     let app_result = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -2514,7 +2948,22 @@ pub fn run() {
                 conn: Mutex::new(conn),
                 mineru: Mutex::new(mineru),
                 translation_controls: Mutex::new(HashMap::new()),
+                task_slots: Mutex::new(HashMap::new()),
+                task_cancel: Mutex::new(HashMap::new()),
             });
+
+            // 主窗口：点红灯只关窗、不退出应用（macOS 习惯；退出走 Cmd+Q 或菜单「退出」）
+            // 后台任务在独立线程里跑，窗口隐藏不影响它们继续执行。
+            if let Some(win) = app.get_webview_window("main") {
+                let w = win.clone();
+                win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w.hide();
+                        logging::info("主窗口关闭请求：已隐藏窗口，应用继续驻留");
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2533,6 +2982,7 @@ pub fn run() {
             start_translate,
             pause_translate,
             resume_translate,
+            cancel_task,
             read_translated,
             read_bilingual,
             list_api_configs,
@@ -2572,7 +3022,33 @@ pub fn run() {
             rename_note,
             replace_in_notes
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        .and_then(|app| {
+            app.run(|app_handle, event| match event {
+                // 显式退出（Cmd+Q / 菜单「退出」）：把进行中与排队的任务落成中断状态，
+                // 不留幽灵进度条；关闭窗口不会走到这里（红灯只隐藏窗口）
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    if code.is_some() {
+                        mark_active_tasks_interrupted(app_handle, "应用退出，任务已中断");
+                    }
+                }
+                // macOS：点 Dock 图标把隐藏的主窗口找回来
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } => {
+                    if !has_visible_windows {
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                }
+                _ => {}
+            });
+            Ok(())
+        });
 
     // 正常退出：清理崩溃标记（异常崩溃时该文件残留，供下次启动检测）
     if let Some(p) = SESSION_MARKER.get() {

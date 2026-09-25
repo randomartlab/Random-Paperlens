@@ -207,6 +207,8 @@ function App() {
   const [recog, setRecog] = useState<{ doc: Doc; result: ParadigmResult } | null>(null);
   const [recognizing, setRecognizing] = useState<string | null>(null);
   const [digesting, setDigesting] = useState<string | null>(null);
+  // 同篇串行：排队等待中的任务（按文献 id），显示在卡片上，避免看起来像卡住
+  const [queued, setQueued] = useState<Record<string, "translate" | "digest">>({});
   const [digestProgress, setDigestProgress] = useState<
     Record<string, { stage: string; progress: number; detail: string }>
   >({});
@@ -317,10 +319,19 @@ function App() {
         ...t,
         [doc.id]: { stage: "启动中", progress: 0, detail: "", paused: false },
       }));
-      await invoke("start_translate", {
+      const r = await invoke<{ state?: string }>("start_translate", {
         docId: doc.id,
         direction: doc.language === "中文" ? "zh_to_en" : "en_to_zh",
       });
+      if (r?.state === "queued") {
+        // 同篇串行：这篇已有任务在跑，本次排队等待，避免两个任务互相拖慢
+        setTranslating((prev) => {
+          const { [doc.id]: _drop, ...rest } = prev;
+          return rest;
+        });
+        setQueued((prev) => ({ ...prev, [doc.id]: "translate" }));
+        setNotice("这篇已有一个任务在进行，「翻译」已排队，等它结束后自动开始");
+      }
     } catch (e) {
       const msg = String(e);
       setTranslating((prev) => {
@@ -387,7 +398,18 @@ function App() {
       [doc.id]: { stage: "准备", progress: 0, detail: "" },
     }));
     try {
-      await invoke("start_digest", { docId: doc.id });
+      await invoke<{ state?: string }>("start_digest", { docId: doc.id }).then((r) => {
+        if (r?.state === "queued") {
+          // 同篇串行：翻译还没结束，拆解排队等待
+          setDigesting(null);
+          setDigestProgress((prev) => {
+            const { [doc.id]: _drop, ...rest } = prev;
+            return rest;
+          });
+          setQueued((prev) => ({ ...prev, [doc.id]: "digest" }));
+          setNotice("这篇正在翻译，「拆解」已排队，翻译完成后自动开始");
+        }
+      });
     } catch (e) {
       setDigesting(null);
       setDigestProgress((prev) => {
@@ -542,6 +564,51 @@ function App() {
         void showTranslateErrorDialog(err);
       },
     );
+
+    // 同篇任务：排队 / 出队 / 取消（提示到位，避免"看起来卡住"）
+    register<{ doc_id: string; kind: string }>("task-queued", (p) => {
+      setQueued((prev) => ({ ...prev, [p.doc_id]: p.kind === "digest" ? "digest" : "translate" }));
+    });
+    register<{ doc_id: string; kind: string }>("task-dequeued", (p) => {
+      setQueued((prev) => {
+        const { [p.doc_id]: _drop, ...rest } = prev;
+        return rest;
+      });
+      setNotice(
+        p.kind === "digest"
+          ? "翻译已完成，排队的「拆解」开始执行"
+          : "上一件事已完成，排队的「翻译」开始执行",
+      );
+    });
+    register<{ doc_id: string }>("task-cancelled", (p) => {
+      setQueued((prev) => {
+        const { [p.doc_id]: _drop, ...rest } = prev;
+        return rest;
+      });
+      setNotice("已取消排队");
+    });
+    register<{ doc_id: string; error?: string }>("queue-start-failed", (p) => {
+      setQueued((prev) => {
+        const { [p.doc_id]: _drop, ...rest } = prev;
+        return rest;
+      });
+      setNotice(`排队任务启动失败：${p.error ?? "未知原因"}`);
+    });
+    register<{ doc_id: string }>("translate-cancelled", (p) => {
+      setTranslating((prev) => {
+        const { [p.doc_id]: _drop, ...rest } = prev;
+        return rest;
+      });
+      setNotice("翻译已取消，已完成的段落会保留，可再次点击继续");
+    });
+    register<{ doc_id: string }>("digest-cancelled", (p) => {
+      setDigesting(null);
+      setDigestProgress((prev) => {
+        const { [p.doc_id]: _drop, ...rest } = prev;
+        return rest;
+      });
+      setNotice("拆解已取消，本次结果未保存，可重新拆解");
+    });
 
     // 拖拽导入：窗口级文件拖放事件
     let unlisten: (() => void) | undefined;
@@ -852,6 +919,11 @@ function App() {
                       未读完
                     </span>
                   )}
+                  {queued[d.id] && !translating[d.id] && (
+                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                      {queued[d.id] === "digest" ? "拆解已排队" : "翻译已排队"}
+                    </span>
+                  )}
                   <ReadToggle
                     value={d.read_status}
                     onChange={(v) => handleToggleRead(d, v)}
@@ -899,6 +971,23 @@ function App() {
                       <span className="text-[11px] text-primary/40">
                         {translating[d.id].detail}
                       </span>
+                      {/* 同篇串行：翻译进行中仍可点「拆解」，会排队等翻译结束 */}
+                      {queued[d.id] === "digest" ? (
+                        <span className="text-[11px] font-medium text-violet-700">
+                          拆解已排队，翻译完成后自动开始
+                        </span>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDigest(d);
+                          }}
+                          title="这篇正在翻译，点了会排队，等翻译结束后自动开始"
+                          className="text-[11px] text-violet-700 underline underline-offset-2 hover:text-violet-800"
+                        >
+                          拆解（需排队）
+                        </button>
+                      )}
                     </div>
                   ) : parsing[d.id] ? (
                     <div className="flex w-40 flex-col items-end gap-1">

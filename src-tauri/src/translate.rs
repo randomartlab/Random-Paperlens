@@ -122,7 +122,55 @@ pub fn split_markdown(md: &str) -> Vec<Segment> {
         buf.push('\n');
     }
     flush(&mut segments, &mut buf, &mut kind, &mut idx);
+
+    // 目录/清单型段落：单独标记为 toc，并把条目行连通为硬换行（"  \n"），
+    // 这样渲染端与翻译后处理都不会把条目折成一行（见 normalize_translated）
+    for seg in segments.iter_mut() {
+        if seg.kind != "paragraph" {
+            continue;
+        }
+        let lines: Vec<&str> = seg
+            .content
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+        if looks_like_toc(&lines) {
+            seg.kind = "toc".to_string();
+            seg.content = lines.join("  \n");
+        }
+    }
     segments
+}
+
+/// 判断一段连续行是否为「目录 / 清单」型内容：
+/// 至少 3 行，且 60% 以上的行是"标题 + 页码"或带点线引导符（如 `1. Introduction .... 3`）。
+/// 命中后按条目逐行处理，不再当作普通段落折叠。
+fn looks_like_toc(lines: &[&str]) -> bool {
+    if lines.len() < 3 {
+        return false;
+    }
+    let mut hits = 0usize;
+    for l in lines {
+        let t = l.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let has_leader = t.contains("....") || t.contains('…');
+        // 以页码结尾：末位是数字，且数字前面是空白 / 点 / 省略号
+        let ends_with_page = t.ends_with(|c: char| c.is_ascii_digit())
+            && t.chars().count() >= 5
+            && t.chars()
+                .rev()
+                .skip_while(|c| c.is_ascii_digit())
+                .next()
+                .map(|c| c.is_whitespace() || c == '.' || c == '…')
+                .unwrap_or(false);
+        if has_leader || ends_with_page {
+            hits += 1;
+        }
+    }
+    hits * 10 >= lines.len().saturating_mul(6)
 }
 
 /// 翻译错误的结构化分类，供前端区分：网络不可达 / LLM 业务错误码 / 配置问题
@@ -143,6 +191,19 @@ impl TranslateError {
             hint: hint.to_string(),
             retryable: false,
         }
+    }
+
+    /// 用户取消（不是失败）：任务线程据此收尾，界面显示「已取消」而不是错误
+    pub fn cancelled() -> Self {
+        Self::new(
+            "cancelled",
+            "已取消".to_string(),
+            "已完成的段落会保留，可再次点击继续",
+        )
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.category == "cancelled"
     }
 }
 
@@ -170,7 +231,7 @@ fn classify_network_error(e: &reqwest::Error) -> TranslateError {
 }
 
 /// 从 OpenAI 兼容的 JSON 错误响应体中提取错误详情
-fn extract_llm_error_detail(body: &str) -> Option<String> {
+pub fn extract_llm_error_detail(body: &str) -> Option<String> {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(s) = v["error"]["message"].as_str() {
             return Some(s.to_string());
@@ -417,11 +478,19 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-/// 译文段落化：表格/代码块保持原样；其余（段落/标题/图注/参考文献）将换行折叠为空格，
+/// 译文段落化：表格/代码块保持原样；目录按条目保留换行（硬换行）；
+/// 其余（段落/标题/图注/参考文献）将换行折叠为空格，
 /// 避免 LLM 一句一换行导致渲染成碎片段落
 fn normalize_translated(kind: &str, text: &str) -> String {
     match kind {
         "table" | "code" => text.trim().to_string(),
+        // 目录：一条一行，用 Markdown 硬换行连接，渲染时逐行显示
+        "toc" => text
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("  \n"),
         _ => text.split_whitespace().collect::<Vec<_>>().join(" "),
     }
 }
@@ -529,7 +598,9 @@ impl Translator {
                  3) Translate accurately in academic style, strictly following the glossary;\
                  4) The translation must follow the register and grammar of English academic writing: avoid direct word-for-word translation from Chinese (Chinglish),\
                  reorder sentences according to English conventions, split or merge long sentences where appropriate, and use standard scholarly expressions\
-                 (e.g. \"This paper proposes\" \"The results show that\"). It should read as if written by a native English-speaking scholar."
+                 (e.g. \"This paper proposes\" \"The results show that\"). It should read as if written by a native English-speaking scholar;\
+                 5) Table-of-contents / list-like content (one entry per line) must be translated entry by entry and keep one entry per line;\
+                 keep the numbering and page numbers unchanged, never merge entries into one paragraph."
                     .to_string()
             }
             TranslateDirection::EnToZh => {
@@ -540,7 +611,9 @@ impl Translator {
                      4) 译文须符合中文学术论文的语体与语法：避免欧化句式（少用“被”字被动句、\
                      避免英文式长定语从句前置），按中文语序重组句子，长句可适当拆分；\
                      使用中文学术惯用表达（如“本文提出”“研究表明”“值得注意的是”），\
-                     读起来应像中文母语学者撰写，而不是逐词直译的翻译腔。"
+                     读起来应像中文母语学者撰写，而不是逐词直译的翻译腔；\
+                     5) 目录、清单、逐条排列的内容（每条一行）必须逐条翻译并保持一条一行，\
+                     编号与页码原样保留，禁止把多条合并成一段。"
                     .to_string()
             }
         };
@@ -749,6 +822,7 @@ pub fn translate_batch(
     segments: &mut [Segment],
     concurrency: usize,
     paused: Option<&AtomicBool>,
+    cancelled: Option<&AtomicBool>,
     on_done: &mut (dyn FnMut(usize, &str, &str) + Send), // (index, kind, translated_text)
 ) -> Result<(), TranslateError> {
     let concurrency = concurrency.max(1);
@@ -775,6 +849,17 @@ pub fn translate_batch(
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for (i, seg) in segments.iter().enumerate() {
+            // 取消：不再启动新段，立即收尾（在途段跑完即止）；
+            // 已完成段落已由回调逐段落盘，重新开始时续跑
+            if let Some(c) = cancelled {
+                if c.load(Ordering::SeqCst) {
+                    let mut f = failed.lock().unwrap();
+                    if f.is_none() {
+                        *f = Some(TranslateError::cancelled());
+                    }
+                    break;
+                }
+            }
             // 暂停：暂停标志置位时不再启动新段，直到恢复
             if let Some(p) = paused {
                 while p.load(Ordering::SeqCst) {
@@ -833,4 +918,51 @@ pub fn translate_batch(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toc_block_is_detected_and_kept_per_line() {
+        let md = "# 论文标题\n\n1. Introduction .... 3\n2. Methods .... 5\n3. Results .... 9\n\n正文段落内容。";
+        let segs = split_markdown(md);
+        let toc = segs
+            .iter()
+            .find(|s| s.kind == "toc")
+            .expect("应识别出 toc 段");
+        assert!(toc.content.contains("Introduction .... 3"));
+        assert_eq!(
+            toc.content.matches("  \n").count(),
+            2,
+            "三条目录之间应保留两条硬换行：{}",
+            toc.content
+        );
+        assert!(segs
+            .iter()
+            .any(|s| s.kind == "paragraph" && s.content.contains("正文段落")));
+    }
+
+    #[test]
+    fn normal_paragraph_is_not_treated_as_toc() {
+        let md = "第一段内容，讲了一件很长的事情，并且描述了背景。\n第二段内容，继续讲方法与结果。\n第三段收尾。";
+        let segs = split_markdown(md);
+        assert!(
+            segs.iter().all(|s| s.kind != "toc"),
+            "普通段落不应该被当成目录"
+        );
+    }
+
+    #[test]
+    fn toc_translation_keeps_hard_breaks() {
+        let out = normalize_translated("toc", "1、引言 .... 3\n2、方法 .... 5\n");
+        assert_eq!(out, "1、引言 .... 3  \n2、方法 .... 5");
+    }
+
+    #[test]
+    fn plain_paragraph_translation_still_collapses() {
+        let out = normalize_translated("paragraph", "一句一换行\n的译文\n应当折叠");
+        assert_eq!(out, "一句一换行 的译文 应当折叠");
+    }
 }

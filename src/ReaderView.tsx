@@ -40,6 +40,23 @@ interface DigestField {
   en: string;
   table: string | null;
   failed: boolean;
+  /** 失败原因分类：config（凭据/配置）/ network / llm / internal；旧数据为空 */
+  error_category?: string;
+  /** 失败原因原文（说明是哪个环节出问题） */
+  error_message?: string;
+}
+
+/** 把字段级失败翻译成"是哪个环节出问题"的人话 */
+function upstreamFailureLabel(f: DigestField): string | null {
+  const cat = f.error_category ?? "";
+  const msg = f.error_message ?? "";
+  if (cat === "config" || /401|403|API Key|鉴权|未授权|Unauthorized|无效/.test(msg)) {
+    return "接口鉴权失败";
+  }
+  if (cat === "network") return "网络不可达";
+  if (cat === "llm") return "模型返回异常";
+  if (cat === "internal") return "处理出错";
+  return "拆解失败";
 }
 
 interface DigestRecord {
@@ -1298,6 +1315,45 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
                 </div>
               </div>
 
+              {/* 上游故障统一横幅：把"软件坏了"和"接口/网络出问题"分开说清楚 */}
+              {(() => {
+                const pool = editing && editFields ? editFields : digest.fields;
+                const failed = pool.filter((f) => f.failed);
+                if (failed.length === 0) return null;
+                const cred = failed.filter((f) => upstreamFailureLabel(f) === "接口鉴权失败").length;
+                const net = failed.filter((f) => upstreamFailureLabel(f) === "网络不可达").length;
+                const llm = failed.filter((f) => upstreamFailureLabel(f) === "模型返回异常").length;
+                const missing = failed.length - cred - net - llm;
+                const parts: string[] = [];
+                if (cred) parts.push(`${cred} 项因接口鉴权失败`);
+                if (net) parts.push(`${net} 项因网络不可达`);
+                if (llm) parts.push(`${llm} 项因模型返回异常`);
+                if (missing) parts.push(`${missing} 项未找到可用出处`);
+                const isUpstream = cred + net + llm > 0;
+                return (
+                  <div
+                    className={`mb-5 rounded-xl border p-4 text-sm leading-relaxed ${
+                      isUpstream
+                        ? "border-warning-border bg-warning-bg text-warning-fg"
+                        : "border-divider bg-surface text-primary/70"
+                    }`}
+                  >
+                    <div className="font-semibold">
+                      {isUpstream
+                        ? `本页有 ${failed.length} 个字段没能完成，其中 ${parts.filter((x) => !x.includes("未找到")).join("、")}——问题出在上游接口，不是软件本身`
+                        : `本页有 ${failed.length} 个字段未能定位到原文出处，已在对应条目上标出`}
+                    </div>
+                    {isUpstream && (
+                      <div className="mt-1.5">
+                        请到「设置 → API 配置」检查 Base URL、API Key 与模型名，可先用「测试连接」验证；
+                        解析走的是 MinerU 那套配置，不受影响。已完成的字段仍然保留。
+                      </div>
+                    )}
+                    <div className="mt-1.5 opacity-80">明细：{parts.join("、")}</div>
+                  </div>
+                );
+              })()}
+
               {/* 字段：编辑模式可编辑；展示模式双语对照 */}
               {(editing && editFields ? editFields : digest.fields).map((fld, i) =>
                 editing ? (
@@ -1374,8 +1430,11 @@ function ReaderView({ docId, title, onBack, initialMode, onOpenNotes }: Props) {
                       </span>
                       <span className="text-[10px] text-primary/40">{fld.source}</span>
                       {fld.failed && (
-                        <span className="rounded bg-warning-bg px-1 text-[9px] text-warning-fg">
-                          引用缺失/失败
+                        <span
+                          className="rounded bg-warning-bg px-1 text-[9px] text-warning-fg"
+                          title={fld.error_message || undefined}
+                        >
+                          {upstreamFailureLabel(fld)}
                         </span>
                       )}
                     </div>

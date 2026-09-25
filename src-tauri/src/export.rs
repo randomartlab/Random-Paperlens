@@ -159,8 +159,29 @@ pub fn md_to_html(md: &str, base_dir: &Path) -> String {
 
     let flush_para = |out: &mut String, para: &mut Vec<String>, started: &mut bool| {
         if *started {
+            // 行尾两个空格 = Markdown 硬换行（目录/清单靠它保持逐行）→ 导出为 <br>；
+            // 其余按段落折行为空格（避免 LLM 一句一换行渲染成碎片）
+            let mut pieces: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            for (i, l) in para.iter().enumerate() {
+                if i > 0 {
+                    if para[i - 1].ends_with("  ") {
+                        pieces.push(cur.clone());
+                        cur.clear();
+                    } else {
+                        cur.push(' ');
+                    }
+                }
+                cur.push_str(l.trim_end());
+            }
+            pieces.push(cur);
+            let body: String = pieces
+                .iter()
+                .map(|p| inline_html(p.trim()))
+                .collect::<Vec<_>>()
+                .join("<br>");
             out.push_str("<p>");
-            out.push_str(&inline_html(&para.join(" ")));
+            out.push_str(&body);
             out.push_str("</p>\n");
             para.clear();
             *started = false;
@@ -169,6 +190,8 @@ pub fn md_to_html(md: &str, base_dir: &Path) -> String {
 
     let mut rows: Vec<String> = Vec::new();
     for raw in md.split('\n') {
+        // 行尾两个空格是 Markdown 硬换行标记（目录/清单靠它保持逐行），这里要保留
+        let hard_break = raw.ends_with("  ");
         let line = raw.trim_end();
         let t = line.trim();
         if in_code {
@@ -256,7 +279,11 @@ pub fn md_to_html(md: &str, base_dir: &Path) -> String {
         if !para_started {
             para_started = true;
         }
-        para_buf.push(line.to_string());
+        para_buf.push(if hard_break {
+            format!("{t}  ")
+        } else {
+            t.to_string()
+        });
     }
     if in_code {
         out.push_str("<pre><code>");
@@ -544,5 +571,32 @@ mod tests {
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("#f5ecd9"));
         assert!(html.contains("<h1>T</h1>"));
+    }
+}
+
+#[cfg(test)]
+mod toc_export_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn hard_break_lines_become_br_in_html() {
+        // 用中文顿号而非 "1. "（后者是 Markdown 有序列表语法，走列表分支）
+        let md = "1、引言 .... 3  \n2、方法 .... 5  \n3、结果 .... 9";
+        let html = md_to_html(md, Path::new("."));
+        assert_eq!(
+            html.matches("<br>").count(),
+            2,
+            "三条目录应导出两个 <br>：{html}"
+        );
+        assert!(html.contains("引言 .... 3"));
+    }
+
+    #[test]
+    fn soft_wrapped_lines_still_join_with_space() {
+        let md = "第一行内容\n第二行内容";
+        let html = md_to_html(md, Path::new("."));
+        assert!(!html.contains("<br>"), "普通段落不应插入硬换行：{html}");
+        assert!(html.contains("第一行内容 第二行内容"), "应折叠为一段：{html}");
     }
 }
